@@ -31,11 +31,28 @@ body {
   background: var(--bg);
   color: var(--text);
 }
-.app {
-  max-width: 1180px;
+.layout {
+  max-width: 1680px;
   margin: 0 auto;
   padding: 22px 16px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.rail-left { order: 2; }
+.rail-right { order: 3; }
+.app {
   position: relative;
+  order: 1;
+  min-width: 0;
+}
+@media (min-width: 1280px) {
+  .layout { flex-direction: row; align-items: flex-start; justify-content: center; }
+  .rail { width: 240px; flex: 0 0 240px; }
+  .rail-left { order: 0; }
+  .app { order: 1; flex: 1 1 auto; max-width: 1180px; }
+  .rail-right { order: 2; }
 }
 
 /* ---- header ---- */
@@ -317,19 +334,13 @@ body {
 
 .empty-msg { text-align: center; padding: 40px 20px; color: var(--text-soft); font-size: 13px; }
 
-/* ---- inbox digest ---- */
-.inbox-wrap {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-}
+/* ---- inbox digest (now lives in the side rails, see .rail) ---- */
 .inbox-card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 12px 14px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 .inbox-card h3 {
   font-family: Georgia, serif;
@@ -344,8 +355,6 @@ body {
 .inbox-row .it-title { color: var(--text); display: block; }
 .inbox-row .it-meta { color: var(--text-soft); font-size: 10.5px; margin-top: 1px; }
 .inbox-empty { color: var(--text-soft); font-size: 12px; font-style: italic; }
-@media (max-width: 900px) { .inbox-wrap { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 640px) { .inbox-wrap { grid-template-columns: 1fr; } }
 
 /* ---- UPenn to-dos (manual, local) ---- */
 .todo-add { display: flex; gap: 6px; margin-bottom: 8px; }
@@ -450,7 +459,19 @@ body {
 </style>
 </head>
 <body>
-<div class="app">
+<div class="layout">
+  <aside class="rail rail-left">
+    <div class="inbox-card">
+      <h3>Find an event</h3>
+      <div class="todo-add">
+        <input type="text" id="searchInput" placeholder="Search your calendar&hellip;">
+        <button id="searchBtn">Find</button>
+      </div>
+      <div id="searchResults"><div class="inbox-empty">Search past or upcoming events by name.</div></div>
+    </div>
+  </aside>
+
+  <div class="app">
   <div class="topbar">
     <div class="title-row">
       <svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="13" fill="none" stroke="#D9B45E" stroke-width="1.4"/><line x1="15" y1="8" x2="15" y2="22" stroke="#D9B45E" stroke-width="1.4"/><path d="M15 20 C11 18 19 15 15 13 C11 11 19 8 15 7" fill="none" stroke="#90A468" stroke-width="1"/></svg>
@@ -505,15 +526,9 @@ body {
     <div class="grid-body" id="gridBody"></div>
   </div>
 
-  <div class="inbox-wrap">
-    <div class="inbox-card">
-      <h3>Find an event</h3>
-      <div class="todo-add">
-        <input type="text" id="searchInput" placeholder="Search your calendar&hellip;">
-        <button id="searchBtn">Find</button>
-      </div>
-      <div id="searchResults"><div class="inbox-empty">Search past or upcoming events by name.</div></div>
-    </div>
+  </div>
+
+  <aside class="rail rail-right">
     <div class="inbox-card">
       <h3>Meetings &amp; reports</h3>
       <div id="meetList"><div class="inbox-empty">Checking inbox&hellip;</div></div>
@@ -526,7 +541,7 @@ body {
       </div>
       <div id="todoList"></div>
     </div>
-  </div>
+  </aside>
 </div>
 
 <!-- Avatar: Hermes, caduceus medallion -->
