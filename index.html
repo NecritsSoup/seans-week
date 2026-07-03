@@ -40,6 +40,8 @@ body {
   gap: 20px;
 }
 .rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.signed-in-only { display: none; flex-direction: column; gap: 16px; }
+.signed-in-only.show { display: flex; }
 .rail-left { order: 2; }
 .rail-right { order: 3; }
 .app {
@@ -548,17 +550,19 @@ body {
       <h3>Meetings &amp; reports</h3>
       <div id="meetList"><div class="inbox-empty">Checking inbox&hellip;</div></div>
     </div>
-    <div class="inbox-card">
-      <h3>Recently found in your email</h3>
-      <div id="pennScanList"><div class="inbox-empty">Checking for new Penn emails&hellip;</div></div>
-    </div>
-    <div class="inbox-card">
-      <h3>UPenn to-dos</h3>
-      <div class="todo-add">
-        <input type="text" id="todoInput" placeholder="Add something for UPenn&hellip;">
-        <button id="todoAddBtn">Add</button>
+    <div id="pennSection" class="signed-in-only">
+      <div class="inbox-card">
+        <h3>Recently found in your email</h3>
+        <div id="pennScanList"><div class="inbox-empty">Checking for new Penn emails&hellip;</div></div>
       </div>
-      <div id="todoList"></div>
+      <div class="inbox-card">
+        <h3>UPenn to-dos</h3>
+        <div class="todo-add">
+          <input type="text" id="todoInput" placeholder="Add something for UPenn&hellip;">
+          <button id="todoAddBtn">Add</button>
+        </div>
+        <div id="todoList"></div>
+      </div>
     </div>
   </aside>
 </div>
@@ -611,6 +615,8 @@ function onGoogleSignedIn() {
     banner.innerHTML = '<strong>Connected.</strong> Signed in with Google — live Calendar/Gmail sync is active. ' +
       'Tell Hermes AI parsing still needs its own server piece and isn\'t connected here yet.';
   }
+  const pennSection = document.getElementById('pennSection');
+  if (pennSection) pennSection.classList.add('show');
   loadEvents();
   loadTodayHabits();
   loadInbox();
