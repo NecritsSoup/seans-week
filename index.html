@@ -355,6 +355,21 @@ body {
 .inbox-row .it-title { color: var(--text); display: block; }
 .inbox-row .it-meta { color: var(--text-soft); font-size: 10.5px; margin-top: 1px; }
 .inbox-empty { color: var(--text-soft); font-size: 12px; font-style: italic; }
+.scan-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.scan-row .it-title { flex: 1; min-width: 0; }
+.scan-add-btn {
+  border: 1px solid var(--border);
+  background: var(--panel-hi);
+  color: var(--text-soft);
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.scan-add-btn:hover:not([disabled]) { border-color: var(--gold); color: var(--text); }
+.scan-add-btn[disabled] { opacity: 0.55; cursor: default; }
 
 /* ---- UPenn to-dos (manual, local) ---- */
 .todo-add { display: flex; gap: 6px; margin-bottom: 8px; }
@@ -534,6 +549,10 @@ body {
       <div id="meetList"><div class="inbox-empty">Checking inbox&hellip;</div></div>
     </div>
     <div class="inbox-card">
+      <h3>Recently found in your email</h3>
+      <div id="pennScanList"><div class="inbox-empty">Checking for new Penn emails&hellip;</div></div>
+    </div>
+    <div class="inbox-card">
       <h3>UPenn to-dos</h3>
       <div class="todo-add">
         <input type="text" id="todoInput" placeholder="Add something for UPenn&hellip;">
@@ -595,6 +614,7 @@ function onGoogleSignedIn() {
   loadEvents();
   loadTodayHabits();
   loadInbox();
+  loadPennScan();
 }
 
 document.getElementById('googleSignInBtn').addEventListener('click', function() {
@@ -666,7 +686,7 @@ window.cowork.callMcpTool = async function(toolName, args) {
         const headers = (msg && msg.payload && msg.payload.headers) || [];
         const subject = (headers.filter(function(h) { return h.name === 'Subject'; })[0] || {}).value || '(no subject)';
         const dateHeader = (headers.filter(function(h) { return h.name === 'Date'; })[0] || {}).value || '';
-        threads.push({ messages: [{ subject: subject, date: dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString() }] });
+        threads.push({ id: stubs[i].id, messages: [{ subject: subject, date: dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString() }] });
       }
       return { isError: false, structuredContent: { threads: threads } };
     }
@@ -1010,6 +1030,62 @@ async function loadInbox() {
     renderInboxList('meetList', meets);
   } catch (err) {
     document.getElementById('meetList').innerHTML = '<div class="inbox-empty">Could not load inbox.</div>';
+  }
+}
+
+/* ---- "Recently found in your email" — live Penn-related email scan ----
+   Nothing here is written to the source file: results are fetched fresh on every
+   load and only persist (as a to-do) if you explicitly click "Add to to-dos",
+   which just writes to this browser's localStorage like any manually-typed item. */
+let pennScanRows = [];
+function getScanAdded() {
+  try { return JSON.parse(localStorage.getItem('upennScanAdded') || '[]'); } catch(e) { return []; }
+}
+function markScanAdded(id) {
+  const added = getScanAdded();
+  if (!added.includes(id)) { added.push(id); localStorage.setItem('upennScanAdded', JSON.stringify(added)); }
+}
+function renderPennScan(rows) {
+  pennScanRows = rows;
+  const el = document.getElementById('pennScanList');
+  if (!rows.length) { el.innerHTML = '<div class="inbox-empty">Nothing new from Penn in the last month.</div>'; return; }
+  const added = getScanAdded();
+  el.innerHTML = rows.slice(0, 6).map((r, i) => {
+    const isAdded = added.includes(r.id);
+    return '<div class="inbox-row scan-row" data-idx="' + i + '">' +
+      '<span class="it-title">' + r.title + '</span><span class="it-meta">' + r.meta + '</span>' +
+      '<button class="scan-add-btn"' + (isAdded ? ' disabled' : '') + '>' + (isAdded ? 'Added ✓' : 'Add to to-dos') + '</button>' +
+    '</div>';
+  }).join('');
+  el.querySelectorAll('.scan-add-btn:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.scan-row');
+      const idx = parseInt(row.getAttribute('data-idx'), 10);
+      const r = pennScanRows[idx];
+      const list = getTodos();
+      list.push({ id: 'scan_' + r.id, text: r.title, done: false, urgent: false });
+      saveTodos(list);
+      markScanAdded(r.id);
+      renderTodos();
+      btn.textContent = 'Added ✓';
+      btn.disabled = true;
+    });
+  });
+}
+async function loadPennScan() {
+  try {
+    const res = await window.cowork.callMcpTool('mcp__efcf0f00-b308-4354-9540-e532090ebf8b__search_threads', {
+      query: 'newer_than:30d from:upenn.edu',
+      pageSize: 6,
+      view: 'THREAD_VIEW_MINIMAL'
+    });
+    const rows = parseThreads(res).map(t => {
+      const m = t.messages[0];
+      return { id: t.id || (m.subject + m.date), title: m.subject || '(no subject)', meta: relTime(m.date) };
+    });
+    renderPennScan(rows);
+  } catch (err) {
+    document.getElementById('pennScanList').innerHTML = '<div class="inbox-empty">Could not check for new Penn emails.</div>';
   }
 }
 
@@ -1530,8 +1606,10 @@ function setupHermes() {
 loadEvents();
 loadTodayHabits();
 loadInbox();
+loadPennScan();
 setInterval(loadTodayHabits, 10 * 60 * 1000);  // re-check calendar for check-in timing every 10 min
 setInterval(loadInbox, 15 * 60 * 1000);        // refresh inbox digest every 15 min
+setInterval(loadPennScan, 15 * 60 * 1000);     // refresh Penn email scan every 15 min
 </script>
 </body>
 </html>
