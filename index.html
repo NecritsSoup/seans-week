@@ -1341,40 +1341,13 @@ function showDeleteConfirm(found, statusEl, confirmEl) {
   document.getElementById('qcNo').addEventListener('click', () => { confirmEl.classList.remove('open'); statusEl.textContent = ''; });
 }
 
-/* ---- UPenn to-dos (manual list, stored locally until a UPenn account is connected) ---- */
-// Seed data, versioned so re-scans can correct earlier guesses without wiping items
-// Sean already checked off or added himself. v2 is read from the actual forwarded
-// email bodies (not just attachment filenames), so deadlines/status here are real.
-const UPENN_SEED_VERSION = 2;
-const UPENN_SEED = [
-  { text: 'URGENT: Confirm housing assignment on Campus Express by Thu Jul 2, 11:59pm EDT', urgent: true },
-  { text: 'PennCard: already approved (Jun 30) — just confirm it arrives before move-in', urgent: false },
-  { text: 'Dining plan: already purchased (First Year 187 Plan) — no action needed', urgent: false },
-  { text: 'Optional: Register for Bridge to Math summer program by Jul 3 if you want the math placement prep', urgent: false },
-  { text: 'Thrive at Penn (TAP) on Canvas — opens Mon Aug 3, Phase 1 due Mon Aug 17 (mandatory)', urgent: false },
-  { text: 'Learn Path@Penn for course registration (crash course recording available on Canvas)', urgent: false },
-  { text: 'Move-In Webinar — Mon Jul 13 @ 1pm EST (Zoom link comes via Residential Services weekly email)', urgent: false },
-  { text: 'New Student Orientation (NSO): Wed Aug 19 – Mon Aug 24, 2026', urgent: false },
-  { text: 'Review MEAM department welcome info (your declared major) + Gamma Cohort NSO group', urgent: false },
-  { text: 'Optional: Vote for Benjamin Franklin Scholars cohort t-shirt', urgent: false }
-];
-
+/* ---- UPenn to-dos (manual list, stored only in this browser's localStorage) ---- */
+// No personal specifics live in this file — it's a public repo. Items are added by
+// hand via the input box below and never leave localStorage / touch the source code.
 function getTodos() {
   try {
     const raw = localStorage.getItem('upennTodos');
-    const storedVersion = parseInt(localStorage.getItem('upennTodosSeedVersion') || '0', 10);
-    let list = raw === null ? [] : JSON.parse(raw);
-    if (storedVersion < UPENN_SEED_VERSION) {
-      // Drop previous seed items that were never checked off (superseded by fresher data),
-      // keep anything the user added themselves or already marked done.
-      list = list.filter(item => !String(item.id).startsWith('seed') || item.done);
-      UPENN_SEED.forEach((s, i) => {
-        list.push({ id: 'seedv' + UPENN_SEED_VERSION + '_' + i, text: s.text, done: false, urgent: s.urgent });
-      });
-      localStorage.setItem('upennTodosSeedVersion', String(UPENN_SEED_VERSION));
-      saveTodos(list);
-    }
-    return list;
+    return raw === null ? [] : JSON.parse(raw);
   } catch(e) { return []; }
 }
 function saveTodos(list) { localStorage.setItem('upennTodos', JSON.stringify(list)); }
