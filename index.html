@@ -488,15 +488,23 @@ body {
   .nav button, .status button { padding: 7px 10px; }
   .legend { gap: 8px 12px; font-size: 11px; }
 
-  /* week grid becomes horizontally scrollable, with the time-of-day column
-     pinned so you always know what hour you're looking at while you scroll
-     through the seven days */
-  .grid-header, .grid-body { grid-template-columns: 46px repeat(7, minmax(78px, 1fr)); min-width: 598px; }
-  .time-col { position: sticky; left: 0; z-index: 2; }
-  .grid-header .cell:first-child { position: sticky; left: 0; z-index: 3; background: var(--panel); }
-  .grid-header .day-name { font-size: 10px; }
-  .grid-header .day-num { font-size: 14px; }
-  .event { font-size: 9.5px; }
+  /* week grid defaults to a single day, Google/Apple Calendar style. The header
+     stays a compact 7-day strip you tap to switch days; the body only shows the
+     column for the selected day (see .day-selected / #gridBody .day-col rules
+     below) instead of squeezing all 7 into view or requiring horizontal scroll. */
+  .grid-scroll { overflow-x: visible; }
+  .grid-header { grid-template-columns: 28px repeat(7, 1fr); min-width: 0; }
+  .grid-header .cell { padding: 6px 2px; cursor: pointer; }
+  .grid-header .day-name { font-size: 9px; }
+  .grid-header .day-num { font-size: 13px; }
+  .grid-header .cell.day-selected { background: var(--accent-soft); border-radius: 8px 8px 0 0; }
+  .grid-header .cell.today.day-selected { background: var(--accent); }
+  .grid-header .cell.today.day-selected .day-num { color: var(--bg); background: transparent; }
+
+  .grid-body { grid-template-columns: 46px 1fr; min-width: 0; }
+  .day-col[data-day-index]:not(.day-selected) { display: none; }
+  .time-col { position: static; }
+  .event { font-size: 11px; }
 
   .quickadd-row { flex-wrap: wrap; }
   .quickadd-row input { flex: 1 1 100%; }
@@ -847,6 +855,52 @@ function dateKey(d) {
 }
 
 let weekStart = startOfWeek(new Date());
+// On phones the grid defaults to a single day (Google/Apple Calendar style) instead
+// of squeezing all 7 into view. selectedDayIdx is 0=Monday..6=Sunday within weekStart's
+// week; the header still shows all 7 days as a tappable strip, only the body column
+// for selectedDayIdx is actually visible (CSS-driven, see the mobile media query).
+let selectedDayIdx = (new Date().getDay() + 6) % 7;
+function isMobileView() {
+  return window.matchMedia('(max-width: 680px)').matches;
+}
+function updateRangeLabel() {
+  const today = new Date();
+  let viewingToday;
+  if (isMobileView()) {
+    const selDate = new Date(weekStart);
+    selDate.setDate(selDate.getDate() + selectedDayIdx);
+    document.getElementById('rangeLabel').textContent = selDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    viewingToday = isSameDay(selDate, today);
+  } else {
+    document.getElementById('rangeLabel').textContent = fmtRange(weekStart);
+    viewingToday = isSameDay(startOfWeek(today), weekStart);
+  }
+  document.getElementById('todayBtn').classList.toggle('elsewhere', !viewingToday);
+  document.getElementById('rangeLabel').classList.toggle('elsewhere', !viewingToday);
+}
+function selectDay(i) {
+  selectedDayIdx = i;
+  document.querySelectorAll('#gridHeader .cell[data-day-index]').forEach(c => {
+    c.classList.toggle('day-selected', +c.dataset.dayIndex === i);
+  });
+  document.querySelectorAll('#gridBody .day-col[data-day-index]').forEach(c => {
+    c.classList.toggle('day-selected', +c.dataset.dayIndex === i);
+  });
+  updateRangeLabel();
+}
+function stepDay(delta) {
+  const current = new Date(weekStart);
+  current.setDate(current.getDate() + selectedDayIdx + delta);
+  const newWeekStart = startOfWeek(current);
+  const newIdx = (current.getDay() + 6) % 7;
+  if (isSameDay(newWeekStart, weekStart)) {
+    selectDay(newIdx);
+  } else {
+    weekStart = newWeekStart;
+    selectedDayIdx = newIdx;
+    loadEvents();
+  }
+}
 
 function buildHeader() {
   const header = document.getElementById('gridHeader');
@@ -859,8 +913,10 @@ function buildHeader() {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + i);
     const cell = document.createElement('div');
-    cell.className = 'cell' + (isSameDay(d, today) ? ' today' : '');
+    cell.className = 'cell' + (isSameDay(d, today) ? ' today' : '') + (i === selectedDayIdx ? ' day-selected' : '');
+    cell.dataset.dayIndex = i;
     cell.innerHTML = '<div class="day-name">' + DOW[d.getDay()] + '</div><div class="day-num">' + d.getDate() + '</div>';
+    cell.addEventListener('click', () => selectDay(i));
     header.appendChild(cell);
   }
 }
@@ -890,7 +946,7 @@ function buildSkeleton() {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + i);
     const col = document.createElement('div');
-    col.className = 'day-col' + (isSameDay(d, today) ? ' today' : '');
+    col.className = 'day-col' + (isSameDay(d, today) ? ' today' : '') + (i === selectedDayIdx ? ' day-selected' : '');
     col.style.height = BODY_HEIGHT + 'px';
     col.dataset.dayIndex = i;
     for (let m = DAY_START; m <= DAY_END; m += 60) {
@@ -947,11 +1003,7 @@ async function loadEvents() {
   statusLine.textContent = 'Loading events…';
   const cols = buildSkeleton();
   buildHeader();
-  document.getElementById('rangeLabel').textContent = fmtRange(weekStart);
-
-  const viewingCurrentWeek = isSameDay(startOfWeek(new Date()), weekStart);
-  document.getElementById('todayBtn').classList.toggle('elsewhere', !viewingCurrentWeek);
-  document.getElementById('rangeLabel').classList.toggle('elsewhere', !viewingCurrentWeek);
+  updateRangeLabel();
 
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 7);
@@ -988,13 +1040,18 @@ async function loadEvents() {
 }
 
 document.getElementById('prevBtn').addEventListener('click', () => {
+  if (isMobileView()) { stepDay(-1); return; }
   const d = new Date(weekStart); d.setDate(d.getDate() - 7); weekStart = d; loadEvents();
 });
 document.getElementById('nextBtn').addEventListener('click', () => {
+  if (isMobileView()) { stepDay(1); return; }
   const d = new Date(weekStart); d.setDate(d.getDate() + 7); weekStart = d; loadEvents();
 });
 document.getElementById('todayBtn').addEventListener('click', () => {
-  weekStart = startOfWeek(new Date()); loadEvents();
+  const now = new Date();
+  weekStart = startOfWeek(now);
+  selectedDayIdx = (now.getDay() + 6) % 7;
+  loadEvents();
 });
 
 /* ---- today's habits (independent of which week is displayed) ---- */
