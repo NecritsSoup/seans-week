@@ -33,9 +33,9 @@ body {
   color: var(--text);
 }
 .layout {
-  max-width: 1680px;
-  margin: 0 auto;
-  padding: 22px 16px 60px;
+  max-width: 100%;
+  margin: 0;
+  padding: 22px 28px 60px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -51,10 +51,10 @@ body {
   min-width: 0;
 }
 @media (min-width: 1280px) {
-  .layout { flex-direction: row; align-items: flex-start; justify-content: center; }
+  .layout { flex-direction: row; align-items: flex-start; }
   .rail { width: 240px; flex: 0 0 240px; }
   .rail-left { order: 0; }
-  .app { order: 1; flex: 1 1 auto; max-width: 1180px; }
+  .app { order: 1; flex: 1 1 auto; min-width: 0; }
   .rail-right { order: 2; }
 }
 
