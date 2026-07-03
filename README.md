@@ -3,3 +3,4 @@ Sean's Week — a classically-themed personal calenda app, ported from a Cowork 
 Favicon added.
 
 Email scan section added.
+Mobile: single-day default view.
