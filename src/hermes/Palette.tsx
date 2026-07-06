@@ -20,11 +20,24 @@ import type { CancelIntent, MoveIntent } from './intents/types';
 import { appendLedger, markLedgerUndone } from './ledgerStore';
 import { clearPendingAction, setPendingAction, type PendingAction } from './pending';
 
+/**
+ * A staged action handed to the palette from another surface (a scroll's
+ * "Schedule" button, for example): the palette opens straight into its
+ * confirm step, ghost on the grid, and runs onCommit after a confirmed save.
+ */
+export interface PaletteSeed {
+  action: PendingAction;
+  summary: string;
+  onCommit?: () => void;
+}
+
 interface PaletteProps {
   open: boolean;
   onClose: () => void;
   /** Moves the Stage: a day to anchor on and/or a view to switch to. */
   onNavigate: (day: Date | null, view: ViewMode | null) => void;
+  /** Optional pre-staged confirmation (see PaletteSeed). */
+  seed?: PaletteSeed | null;
 }
 
 type PaletteMode =
@@ -85,11 +98,12 @@ function searchEvents(events: CalendarEvent[], query: string): CalendarEvent[] {
  * navigates and captures. Destructive intents preview as a ghost on the
  * grid and commit only on a second Enter.
  */
-export function Palette({ open, onClose, onNavigate }: PaletteProps) {
+export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<PaletteMode>({ kind: 'input' });
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const seedCommitRef = useRef<(() => void) | null>(null);
 
   const [rangeStart] = useState(() => addDays(startOfDay(new Date()), -14));
   const [rangeEnd] = useState(() => addDays(startOfDay(new Date()), 90));
@@ -121,10 +135,22 @@ export function Palette({ open, onClose, onNavigate }: PaletteProps) {
 
   useEffect(() => setHighlight(0), [text]);
 
+  // A seeded action skips straight to the confirm step, ghost and all.
+  useEffect(() => {
+    if (!open || !seed) return;
+    const { action, summary, onCommit } = seed;
+    seedCommitRef.current = onCommit ?? null;
+    setPendingAction(action);
+    const day = action.kind === 'cancel' ? startOfDay(new Date(action.event.start)) : action.day;
+    onNavigate(day, null);
+    setMode({ kind: 'confirm', action, summary });
+  }, [open, seed, onNavigate]);
+
   if (!open) return null;
 
   function backToInput() {
     clearPendingAction();
+    seedCommitRef.current = null;
     setMode({ kind: 'input' });
   }
 
@@ -258,6 +284,8 @@ export function Palette({ open, onClose, onNavigate }: PaletteProps) {
           },
         });
       }
+      seedCommitRef.current?.();
+      seedCommitRef.current = null;
       close();
     } catch {
       appendLedger('error', 'A change could not be saved — the calendar is unchanged.');

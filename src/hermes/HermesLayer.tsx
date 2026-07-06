@@ -13,7 +13,7 @@ import {
 } from './briefs';
 import { Card } from './Card';
 import { appendLedger } from './ledgerStore';
-import { Palette } from './Palette';
+import { Palette, type PaletteSeed } from './Palette';
 import { Ledger } from './Ledger';
 import { isQuietToday } from './quiet';
 import { useHermesShortcuts } from './useHermesShortcuts';
@@ -35,6 +35,7 @@ interface ActiveBrief {
  */
 export function HermesLayer({ onNavigate }: HermesLayerProps) {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteSeed, setPaletteSeed] = useState<PaletteSeed | null>(null);
   const [cardOpen, setCardOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [brief, setBrief] = useState<ActiveBrief | null>(null);
@@ -53,6 +54,7 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
 
   const openPalette = useCallback(() => {
     setCardOpen(false);
+    setPaletteSeed(null); // a keyboard summon starts from a clean slate
     setPaletteOpen((open) => !open);
   }, []);
 
@@ -61,14 +63,32 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
     setLedgerOpen((open) => !open);
   }, []);
 
-  // The medallion click summons the Card.
+  // The medallion click summons the Card. Other surfaces summon the palette
+  // with a staged action ('hermes:palette') or open the Ledger ('hermes:ledger').
   useEffect(() => {
     function onSummon() {
       setPaletteOpen(false);
       setCardOpen((open) => !open);
     }
+    function onPaletteSeed(e: Event) {
+      const detail = (e as CustomEvent<PaletteSeed>).detail;
+      if (!detail) return;
+      setCardOpen(false);
+      setPaletteSeed(detail);
+      setPaletteOpen(true);
+    }
+    function onLedgerSummon() {
+      setCardOpen(false);
+      setLedgerOpen(true);
+    }
     window.addEventListener('hermes:summon', onSummon);
-    return () => window.removeEventListener('hermes:summon', onSummon);
+    window.addEventListener('hermes:palette', onPaletteSeed);
+    window.addEventListener('hermes:ledger', onLedgerSummon);
+    return () => {
+      window.removeEventListener('hermes:summon', onSummon);
+      window.removeEventListener('hermes:palette', onPaletteSeed);
+      window.removeEventListener('hermes:ledger', onLedgerSummon);
+    };
   }, []);
 
   useHermesShortcuts({ onPalette: openPalette, onLedger: openLedger });
@@ -100,12 +120,21 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
 
   return (
     <>
-      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} onNavigate={onNavigate} />
+      <Palette
+        open={paletteOpen}
+        onClose={() => {
+          setPaletteOpen(false);
+          setPaletteSeed(null);
+        }}
+        onNavigate={onNavigate}
+        seed={paletteSeed}
+      />
       <Card
         open={cardOpen}
         onClose={() => setCardOpen(false)}
         onOpenPalette={() => {
           setCardOpen(false);
+          setPaletteSeed(null);
           setPaletteOpen(true);
         }}
         onOpenLedger={() => {
