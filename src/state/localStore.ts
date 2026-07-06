@@ -71,6 +71,12 @@ export class LocalEventStore implements EventStore {
     return this.events.length === 0;
   }
 
+  /** Drop every local event (Settings → reset demo data). */
+  async clearAll(): Promise<void> {
+    this.events = [];
+    this.persist();
+  }
+
   private persist(): void {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.events));

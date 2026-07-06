@@ -8,7 +8,17 @@ import type { CategoryId } from '../state/types';
 const STORAGE_KEY = 'seans-week:ledger:v1';
 const CAP = 200;
 
-export type LedgerType = 'create' | 'move' | 'cancel' | 'todo' | 'brief' | 'error';
+export type LedgerType =
+  | 'create'
+  | 'move'
+  | 'cancel'
+  | 'todo'
+  | 'brief'
+  | 'error'
+  /** Google account and data-flow happenings (sign-in, sign-out, resets). */
+  | 'sync'
+  /** Email scrolls turned into to-dos or events. */
+  | 'scroll';
 
 export type LedgerUndo =
   | { kind: 'delete-created'; eventId: string }

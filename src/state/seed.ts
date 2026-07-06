@@ -62,3 +62,14 @@ export async function seedIfNeeded(store: LocalEventStore): Promise<void> {
     /* ignore */
   }
 }
+
+/** Clear all local events and lay the demo week down fresh (Settings). */
+export async function resetDemoData(store: LocalEventStore): Promise<void> {
+  await store.clearAll();
+  try {
+    localStorage.removeItem(SEED_FLAG);
+  } catch {
+    /* ignore */
+  }
+  await seedIfNeeded(store);
+}

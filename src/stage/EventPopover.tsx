@@ -118,6 +118,9 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
               <span className="cat-dot" />
               <span className="cat-label">{category.label}</span>
             </div>
+            {event.source === 'google' && (
+              <div className="pop-origin">from Google Calendar</div>
+            )}
             <div className="pop-actions">
               <button className="btn danger" onClick={() => void remove()}>
                 Delete
