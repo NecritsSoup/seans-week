@@ -6,6 +6,10 @@ interface ShortcutHandlers {
   onPrev: () => void;
   onNext: () => void;
   onView: (view: ViewMode) => void;
+  /** I — toggle the Scrolls inbox. */
+  onScrolls?: () => void;
+  /** D — toggle the Tasks panel. */
+  onTasks?: () => void;
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -16,8 +20,15 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
-/** T = today, ArrowLeft/Right = prev/next, 1/2/3 = Day/Week/Month. */
-export function useKeyboardShortcuts({ onToday, onPrev, onNext, onView }: ShortcutHandlers) {
+/** T = today, ArrowLeft/Right = prev/next, 1/2/3 = Day/Week/Month, I = scrolls, D = tasks. */
+export function useKeyboardShortcuts({
+  onToday,
+  onPrev,
+  onNext,
+  onView,
+  onScrolls,
+  onTasks,
+}: ShortcutHandlers) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -26,6 +37,16 @@ export function useKeyboardShortcuts({ onToday, onPrev, onNext, onView }: Shortc
         case 't':
         case 'T':
           onToday();
+          break;
+        case 'i':
+        case 'I':
+          if (!onScrolls) return;
+          onScrolls();
+          break;
+        case 'd':
+        case 'D':
+          if (!onTasks) return;
+          onTasks();
           break;
         case 'ArrowLeft':
           onPrev();
@@ -49,5 +70,5 @@ export function useKeyboardShortcuts({ onToday, onPrev, onNext, onView }: Shortc
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onToday, onPrev, onNext, onView]);
+  }, [onToday, onPrev, onNext, onView, onScrolls, onTasks]);
 }

@@ -1139,9 +1139,242 @@ h1, h2, h3 {
   text-decoration: line-through;
 }
 
+/* --------------------------------------------------- phase 3 surfaces ---- */
+
+/* Small buttons for scroll/task/settings rows */
+.btn.small {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+/* Topbar: Google status chip + settings gear */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  color: var(--text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.status-chip:hover { border-color: var(--gold); color: var(--text); }
+
+.status-chip .status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-round);
+  background: var(--text-soft);
+  opacity: 0.6;
+}
+
+.status-chip.on .status-dot {
+  background: var(--cat-gym);
+  opacity: 1;
+}
+
+.nav-btn.gear { font-size: 15px; }
+
+/* Hermes FAB scroll badge */
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1.5px solid var(--gold);
+  border-radius: var(--radius-round);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Scrolls panel */
+.scrolls-empty { display: grid; gap: var(--space-4); justify-items: start; }
+.scrolls-empty p { color: var(--text-soft); font-size: 13px; line-height: 1.55; }
+
+.scrolls-note {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.scrolls-section { margin-bottom: var(--space-5); }
+
+.scrolls-heading {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin-bottom: var(--space-2);
+}
+
+.scroll-row {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.scroll-row:last-child { border-bottom: none; }
+
+.scroll-subject { font-size: 13.5px; line-height: 1.4; }
+
+.scroll-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.scroll-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.scrolls-loading { display: grid; gap: var(--space-3); }
+
+.scroll-skeleton {
+  height: 52px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(100deg, var(--panel) 40%, var(--panel-hi) 50%, var(--panel) 60%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -80% 0; }
+}
+
+/* Tasks panel */
+.todo-add {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.todo-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.todo-add input:focus { outline: none; border-color: var(--gold); }
+
+.tasks-hint {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-style: italic;
+  margin-bottom: var(--space-3);
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+
+.todo-row[draggable='true'] { cursor: grab; }
+.todo-row[draggable='true']:active { cursor: grabbing; }
+.todo-row:hover { background: var(--panel-hi); }
+
+.todo-row .todo-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+.todo-row.done .todo-text {
+  color: var(--text-soft);
+  text-decoration: line-through;
+}
+
+.todo-row.urgent:not(.done) .todo-text { color: var(--accent); font-weight: 600; }
+
+.todo-flag,
+.todo-remove {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.todo-flag:hover,
+.todo-remove:hover { color: var(--text); border-color: var(--border); }
+
+.todo-row.urgent .todo-flag { color: var(--accent); font-weight: 700; }
+
+/* Settings panel */
+.settings-section { margin-bottom: var(--space-4); }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.settings-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-note {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panel-body .gold-rule { margin: var(--space-4) 0; }
+
+/* Event popover: origin line for Google events */
+.pop-origin {
+  margin-top: var(--space-1);
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
 /* ------------------------------------------------------------ mobile ---- */
 
 @media (max-width: 720px) {
+  .status-chip { max-width: 34px; }
+  .status-chip .status-dot { margin: 0 auto; }
+
   .topbar {
     height: auto;
     flex-wrap: wrap;

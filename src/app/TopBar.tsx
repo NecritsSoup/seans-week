@@ -1,3 +1,4 @@
+import { useGoogleAuth } from '../google/auth';
 import { addDays, isSameDay, startOfMonth, startOfWeek } from '../lib/time';
 import type { ViewMode } from '../stage/Stage';
 
@@ -8,6 +9,7 @@ interface TopBarProps {
   onNext: () => void;
   onToday: () => void;
   onViewChange: (view: ViewMode) => void;
+  onOpenSettings: () => void;
 }
 
 const VIEWS: Array<{ id: ViewMode; label: string }> = [
@@ -51,7 +53,36 @@ function Medallion() {
   );
 }
 
-export function TopBar({ view, anchor, onPrev, onNext, onToday, onViewChange }: TopBarProps) {
+/** The Google account at a glance; clicking opens Settings. */
+function GoogleChip({ onClick }: { onClick: () => void }) {
+  const auth = useGoogleAuth();
+  const label =
+    auth.status === 'signed-in'
+      ? (auth.email ?? 'Google — connected')
+      : auth.status === 'connecting'
+        ? 'Connecting…'
+        : 'Not signed in';
+  return (
+    <button
+      className={`status-chip${auth.status === 'signed-in' ? ' on' : ''}`}
+      onClick={onClick}
+      title="Google account (Settings)"
+    >
+      <span className="status-dot" aria-hidden="true" />
+      {label}
+    </button>
+  );
+}
+
+export function TopBar({
+  view,
+  anchor,
+  onPrev,
+  onNext,
+  onToday,
+  onViewChange,
+  onOpenSettings,
+}: TopBarProps) {
   const onTodayPeriod = periodIncludesToday(view, anchor);
   return (
     <header className="topbar">
@@ -87,6 +118,10 @@ export function TopBar({ view, anchor, onPrev, onNext, onToday, onViewChange }: 
             </button>
           ))}
         </div>
+        <GoogleChip onClick={onOpenSettings} />
+        <button className="nav-btn gear" onClick={onOpenSettings} aria-label="Settings" title="Settings">
+          ⚙
+        </button>
       </nav>
     </header>
   );
