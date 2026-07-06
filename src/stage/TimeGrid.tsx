@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DAY_END_MIN,
   DAY_START_MIN,
   TOTAL_MIN,
   addDays,
   dateAtMinutes,
   isSameDay,
   minutesOfDay,
+  snapMinutes,
 } from '../lib/time';
+import { appendLedger } from '../hermes/ledgerStore';
 import { usePendingAction, type PendingAction } from '../hermes/pending';
 import { useEventActions, useEvents } from '../state/EventsContext';
+import { getTodos, toggleTodo } from '../state/todos';
 import type { CalendarEvent, CategoryId } from '../state/types';
+import { getDraggedTodo, TODO_DRAG_TYPE } from '../tasks/todoDrag';
 import { CreatePopover } from './CreatePopover';
 import { EventBlock } from './EventBlock';
 import { EventPopover } from './EventPopover';
@@ -17,7 +22,7 @@ import { GhostBlock } from './GhostBlock';
 import { NowLine } from './NowLine';
 import { HourLines, TimeAxis } from './TimeAxis';
 import { layoutDayEvents } from './layout';
-import { useGridDrag } from './useGridDrag';
+import { columnAnchorRect, gridPointAt, useGridDrag } from './useGridDrag';
 import type { AnchorRect } from './popoverPosition';
 
 interface TimeGridProps {
@@ -31,7 +36,14 @@ interface PendingCreate {
   startMin: number;
   endMin: number;
   anchor: AnchorRect;
+  /** Prefill from a dropped to-do; confirming also completes the to-do. */
+  title?: string;
+  categoryId?: CategoryId;
+  todoId?: string;
 }
+
+/** Default span for a to-do dropped on the grid: one hour. */
+const TODO_DROP_MIN = 60;
 
 interface SelectedEvent {
   event: CalendarEvent;
@@ -68,6 +80,7 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
+  const [todoDrop, setTodoDrop] = useState<{ dayIndex: number; startMin: number } | null>(null);
   const hermesPending = usePendingAction();
 
   const rangeStart = days[0];
@@ -130,7 +143,69 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
       start: dateAtMinutes(day, pendingCreate.startMin).toISOString(),
       end: dateAtMinutes(day, pendingCreate.endMin).toISOString(),
     });
+    // A confirmed to-do drop also completes the to-do.
+    if (pendingCreate.todoId) {
+      const todo = getTodos().find((t) => t.id === pendingCreate.todoId);
+      if (todo && !todo.done) toggleTodo(todo.id);
+      appendLedger(
+        'todo',
+        `Scheduled “${title}” from your tasks — ${day.toLocaleDateString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        })} — and marked it done.`
+      );
+    }
     setPendingCreate(null);
+  }
+
+  /* ---- to-dos dragged in from the Tasks panel ---- */
+
+  function todoDropPoint(e: React.DragEvent): { dayIndex: number; startMin: number } | null {
+    const body = bodyRef.current;
+    if (!body) return null;
+    const point = gridPointAt(body, e.clientX, e.clientY, pxPerMin);
+    if (!point) return null;
+    const startMin = Math.min(snapMinutes(point.minute), DAY_END_MIN - TODO_DROP_MIN);
+    return { dayIndex: point.dayIndex, startMin };
+  }
+
+  function onTodoDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes(TODO_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setTodoDrop(todoDropPoint(e));
+  }
+
+  function onTodoDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (!bodyRef.current?.contains(e.relatedTarget as Node | null)) setTodoDrop(null);
+  }
+
+  function onTodoDrop(e: React.DragEvent<HTMLDivElement>) {
+    setTodoDrop(null);
+    if (!e.dataTransfer.types.includes(TODO_DRAG_TYPE)) return;
+    e.preventDefault();
+    let todo: { id: string; text: string } | null = getDraggedTodo();
+    if (!todo) {
+      try {
+        todo = JSON.parse(e.dataTransfer.getData(TODO_DRAG_TYPE)) as { id: string; text: string };
+      } catch {
+        return;
+      }
+    }
+    const point = todoDropPoint(e);
+    const body = bodyRef.current;
+    if (!todo || !point || !body) return;
+    const endMin = point.startMin + TODO_DROP_MIN;
+    setPendingCreate({
+      dayIndex: point.dayIndex,
+      startMin: point.startMin,
+      endMin,
+      anchor: columnAnchorRect(body, point.dayIndex, point.startMin, endMin, pxPerMin),
+      title: todo.text,
+      categoryId: 'upenn',
+      todoId: todo.id,
+    });
   }
 
   const gridTemplateColumns = `var(--axis-width) repeat(${days.length}, minmax(0, 1fr))`;
@@ -159,6 +234,9 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
         className={`grid-body${weekClass}${drag ? ' dragging' : ''}`}
         style={{ gridTemplateColumns, height: TOTAL_MIN * pxPerMin }}
         {...handlers}
+        onDragOver={onTodoDragOver}
+        onDragLeave={onTodoDragLeave}
+        onDrop={onTodoDrop}
       >
         <TimeAxis pxPerMin={pxPerMin} />
         {days.map((day, dayIndex) => {
@@ -206,7 +284,18 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
                   startMin={pendingCreate.startMin}
                   endMin={pendingCreate.endMin}
                   pxPerMin={pxPerMin}
-                  categoryId="work"
+                  categoryId={pendingCreate.categoryId ?? 'work'}
+                  title={pendingCreate.title}
+                />
+              )}
+              {todoDrop !== null && todoDrop.dayIndex === dayIndex && (
+                <GhostBlock
+                  startMin={todoDrop.startMin}
+                  endMin={todoDrop.startMin + TODO_DROP_MIN}
+                  pxPerMin={pxPerMin}
+                  categoryId="upenn"
+                  title={getDraggedTodo()?.text}
+                  pulse
                 />
               )}
               {isToday && <NowLine pxPerMin={pxPerMin} />}
@@ -220,6 +309,8 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
           day={days[pendingCreate.dayIndex]}
           startMin={pendingCreate.startMin}
           endMin={pendingCreate.endMin}
+          initialTitle={pendingCreate.title}
+          initialCategoryId={pendingCreate.categoryId}
           onSave={(title, categoryId) => void savePendingCreate(title, categoryId)}
           onCancel={() => setPendingCreate(null)}
         />

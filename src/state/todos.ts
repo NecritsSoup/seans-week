@@ -50,6 +50,11 @@ export function toggleTodo(id: string): void {
   persist();
 }
 
+export function toggleTodoUrgent(id: string): void {
+  todos = todos.map((t) => (t.id === id ? { ...t, urgent: !t.urgent } : t));
+  persist();
+}
+
 export function removeTodo(id: string): void {
   todos = todos.filter((t) => t.id !== id);
   persist();

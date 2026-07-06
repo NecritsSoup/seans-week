@@ -37,12 +37,53 @@ export interface UseGridDragOptions {
   onEventClick: (event: CalendarEvent, anchor: AnchorRect) => void;
 }
 
-interface GridPoint {
+export interface GridPoint {
   dayIndex: number;
   minute: number;
 }
 
 const CLICK_SLOP_PX = 5;
+
+/** The day column + minute under a client point — shared with drop targets. */
+export function gridPointAt(
+  body: HTMLElement,
+  clientX: number,
+  clientY: number,
+  pxPerMin: number
+): GridPoint | null {
+  const cols = Array.from(body.querySelectorAll<HTMLElement>('[data-day-index]'));
+  if (cols.length === 0) return null;
+  let dayIndex = 0;
+  let colRect = cols[0].getBoundingClientRect();
+  for (let i = 0; i < cols.length; i += 1) {
+    const rect = cols[i].getBoundingClientRect();
+    if (clientX >= rect.left || i === 0) {
+      dayIndex = i;
+      colRect = rect;
+    }
+  }
+  const minute = clampToDayBounds(DAY_START_MIN + (clientY - colRect.top) / pxPerMin);
+  return { dayIndex, minute };
+}
+
+/** The on-screen rect of a time span inside a day column (popover anchors). */
+export function columnAnchorRect(
+  body: HTMLElement,
+  dayIndex: number,
+  startMin: number,
+  endMin: number,
+  pxPerMin: number
+): AnchorRect {
+  const col = body.querySelectorAll<HTMLElement>('[data-day-index]')[dayIndex];
+  if (!col) return { left: 0, top: 0, width: 0, height: 0 };
+  const rect = col.getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top + (startMin - DAY_START_MIN) * pxPerMin,
+    width: rect.width,
+    height: (endMin - startMin) * pxPerMin,
+  };
+}
 
 /**
  * Pointer-driven grid interactions: drag empty space to create, drag a block
@@ -59,21 +100,7 @@ export function useGridDrag(options: UseGridDragOptions) {
     (clientX: number, clientY: number): GridPoint | null => {
       const body = bodyRef.current;
       if (!body) return null;
-      const cols = Array.from(body.querySelectorAll<HTMLElement>('[data-day-index]'));
-      if (cols.length === 0) return null;
-      let dayIndex = 0;
-      let colRect = cols[0].getBoundingClientRect();
-      for (let i = 0; i < cols.length; i += 1) {
-        const rect = cols[i].getBoundingClientRect();
-        if (clientX >= rect.left || i === 0) {
-          dayIndex = i;
-          colRect = rect;
-        }
-      }
-      const minute = clampToDayBounds(
-        DAY_START_MIN + (clientY - colRect.top) / pxPerMin
-      );
-      return { dayIndex, minute };
+      return gridPointAt(body, clientX, clientY, pxPerMin);
     },
     [bodyRef, pxPerMin]
   );
@@ -81,15 +108,8 @@ export function useGridDrag(options: UseGridDragOptions) {
   const columnAnchor = useCallback(
     (dayIndex: number, startMin: number, endMin: number): AnchorRect => {
       const body = bodyRef.current;
-      const col = body?.querySelectorAll<HTMLElement>('[data-day-index]')[dayIndex];
-      if (!col) return { left: 0, top: 0, width: 0, height: 0 };
-      const rect = col.getBoundingClientRect();
-      return {
-        left: rect.left,
-        top: rect.top + (startMin - DAY_START_MIN) * pxPerMin,
-        width: rect.width,
-        height: (endMin - startMin) * pxPerMin,
-      };
+      if (!body) return { left: 0, top: 0, width: 0, height: 0 };
+      return columnAnchorRect(body, dayIndex, startMin, endMin, pxPerMin);
     },
     [bodyRef, pxPerMin]
   );

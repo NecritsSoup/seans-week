@@ -9,14 +9,26 @@ interface CreatePopoverProps {
   day: Date;
   startMin: number;
   endMin: number;
+  /** Prefill (e.g. a to-do dropped onto the grid). */
+  initialTitle?: string;
+  initialCategoryId?: CategoryId;
   onSave: (title: string, categoryId: CategoryId) => void;
   onCancel: () => void;
 }
 
 /** Inline popover shown after drag-creating a slot: set title + category. */
-export function CreatePopover({ anchor, day, startMin, endMin, onSave, onCancel }: CreatePopoverProps) {
-  const [title, setTitle] = useState('');
-  const [categoryId, setCategoryId] = useState<CategoryId>('work');
+export function CreatePopover({
+  anchor,
+  day,
+  startMin,
+  endMin,
+  initialTitle,
+  initialCategoryId,
+  onSave,
+  onCancel,
+}: CreatePopoverProps) {
+  const [title, setTitle] = useState(initialTitle ?? '');
+  const [categoryId, setCategoryId] = useState<CategoryId>(initialCategoryId ?? 'work');
   const { left, top } = popoverPosition(anchor);
 
   const dayLabel = day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });

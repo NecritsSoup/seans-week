@@ -6,6 +6,12 @@ export interface PanelProps {
   onClose: () => void;
   title?: string;
   width?: number;
+  /**
+   * Modal panels (default) dim the stage behind a backdrop and trap focus.
+   * Non-modal panels dock beside a still-interactive stage — the Tasks
+   * panel uses this so to-dos can be dragged onto the grid.
+   */
+  modal?: boolean;
   children: ReactNode;
 }
 
@@ -16,7 +22,7 @@ const FOCUSABLE =
  * Right-side dock/overlay. Slides in over the stage, closes on Escape or
  * backdrop click, and traps focus while open.
  */
-export function Panel({ open, onClose, title, width = 380, children }: PanelProps) {
+export function Panel({ open, onClose, title, width = 380, modal = true, children }: PanelProps) {
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -55,7 +61,7 @@ export function Panel({ open, onClose, title, width = 380, children }: PanelProp
       onClose();
       return;
     }
-    if (e.key !== 'Tab') return;
+    if (e.key !== 'Tab' || !modal) return;
     const panel = panelRef.current;
     if (!panel) return;
     const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
@@ -77,17 +83,19 @@ export function Panel({ open, onClose, title, width = 380, children }: PanelProp
 
   return createPortal(
     <>
-      <div
-        className={`panel-backdrop${closing ? ' closing' : ''}`}
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      {modal && (
+        <div
+          className={`panel-backdrop${closing ? ' closing' : ''}`}
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
       <div
         ref={panelRef}
         className={`panel${closing ? ' closing' : ''}`}
         style={{ '--panel-width': `${width}px` } as React.CSSProperties}
         role="dialog"
-        aria-modal="true"
+        aria-modal={modal}
         aria-label={title}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
