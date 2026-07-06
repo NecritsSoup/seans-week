@@ -8,7 +8,7 @@ interface ShortcutHandlers {
   onView: (view: ViewMode) => void;
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
+export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
     target.isContentEditable ||

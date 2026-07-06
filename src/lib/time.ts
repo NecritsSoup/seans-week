@@ -47,6 +47,13 @@ export function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+/** "2026-07-06" — local-date key, matching the legacy habitLog shape. */
+export function dateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+}
+
 /** Minutes since local midnight. */
 export function minutesOfDay(d: Date): number {
   return d.getHours() * 60 + d.getMinutes();
