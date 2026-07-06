@@ -1,0 +1,139 @@
+/* ---------------------------------------------------------------------------
+   Design tokens — Sean's Week
+   Every color, space, radius, shadow and duration lives here.
+   Themes are switched via data-theme on <html>.
+--------------------------------------------------------------------------- */
+
+:root {
+  /* Category colors (constant across themes; tints derive from theme surfaces) */
+  --cat-work: #e27a50;
+  --cat-gym: #90a468;
+  --cat-reading: #e3b94e;
+  --cat-dinner: #c97b54;
+  --cat-walk: #5fa0ac;
+  --cat-upenn: #9b7fb8;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-round: 999px;
+
+  /* Motion */
+  --dur-fast: 150ms;
+  --dur-med: 200ms;
+  --dur-slow: 250ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Type */
+  --font-display: 'Fraunces', Georgia, 'Palatino Linotype', serif;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Layout */
+  --topbar-height: 58px;
+  --axis-width: 56px;
+}
+
+/* ---- Vase: the deployed dark-parchment look (legacy palette) ---- */
+:root,
+[data-theme='vase'] {
+  color-scheme: dark;
+  --bg: #201b15;
+  --panel: #2a2318;
+  --panel-hi: #34291d;
+  --text: #f3ebda;
+  --text-soft: #b3a48c;
+  --border: #4a4030;
+  --accent: #e27a50;
+  --accent-soft: #4a3222;
+  --accent-contrast: #201b15;
+  --today-bg: #3d3120;
+  --gold: #d9b45e;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --grain-opacity: 0.035;
+}
+
+/* ---- Fresco: light warm parchment ---- */
+[data-theme='fresco'] {
+  color-scheme: light;
+  --bg: #f1e8d6;
+  --panel: #f9f3e5;
+  --panel-hi: #efe3cc;
+  --text: #3b3226;
+  --text-soft: #8a7a63;
+  --border: #d9cbaf;
+  --accent: #c05f36;
+  --accent-soft: #f0d9c6;
+  --accent-contrast: #fdf9ef;
+  --today-bg: #f4e6c6;
+  --gold: #a8842c;
+  --shadow-sm: 0 1px 3px rgba(92, 74, 48, 0.14);
+  --shadow-md: 0 4px 14px rgba(92, 74, 48, 0.16);
+  --shadow-lg: 0 10px 28px rgba(92, 74, 48, 0.24);
+  --grain-opacity: 0.05;
+}
+
+/* ---- Amphora: terracotta / fired clay ---- */
+[data-theme='amphora'] {
+  color-scheme: dark;
+  --bg: #33200f;
+  --panel: #40291a;
+  --panel-hi: #4d3220;
+  --text: #f5e6d0;
+  --text-soft: #c4a284;
+  --border: #64432a;
+  --accent: #e2984f;
+  --accent-soft: #5a3a20;
+  --accent-contrast: #2c1c10;
+  --today-bg: #53341e;
+  --gold: #e0a93f;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.55);
+  --grain-opacity: 0.04;
+}
+
+/* ---- Nyx: true dark, black-figure — gold and terracotta on near-black ---- */
+[data-theme='nyx'] {
+  color-scheme: dark;
+  --bg: #0d0b08;
+  --panel: #161310;
+  --panel-hi: #211b13;
+  --text: #efe3c8;
+  --text-soft: #9c8e74;
+  --border: #33291c;
+  --accent: #d98246;
+  --accent-soft: #3a2614;
+  --accent-contrast: #0d0b08;
+  --today-bg: #1d1710;
+  --gold: #d9b45e;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.75);
+  --grain-opacity: 0.02;
+}
+
+/* ---- Category tint variants: wash, edge, text — derived per theme ---- */
+.cat-work    { --cat: var(--cat-work); }
+.cat-gym     { --cat: var(--cat-gym); }
+.cat-reading { --cat: var(--cat-reading); }
+.cat-dinner  { --cat: var(--cat-dinner); }
+.cat-walk    { --cat: var(--cat-walk); }
+.cat-upenn   { --cat: var(--cat-upenn); }
+
+.cat-work, .cat-gym, .cat-reading, .cat-dinner, .cat-walk, .cat-upenn {
+  --cat-wash: color-mix(in srgb, var(--cat) 18%, var(--panel));
+  --cat-wash-hi: color-mix(in srgb, var(--cat) 30%, var(--panel));
+  --cat-edge: color-mix(in srgb, var(--cat) 70%, var(--panel));
+  --cat-text: color-mix(in srgb, var(--cat) 55%, var(--text));
+}
