@@ -8,14 +8,16 @@ interface GhostBlockProps {
   pxPerMin: number;
   categoryId: CategoryId;
   title?: string;
+  /** Soft breathing highlight for a Hermes preview awaiting confirmation. */
+  pulse?: boolean;
 }
 
 /** Translucent snap-to-grid preview shown while dragging. */
-export function GhostBlock({ startMin, endMin, pxPerMin, categoryId, title }: GhostBlockProps) {
+export function GhostBlock({ startMin, endMin, pxPerMin, categoryId, title, pulse }: GhostBlockProps) {
   const category = categoryById(categoryId);
   return (
     <div
-      className={`ghost-block ${category.colorToken}`}
+      className={`ghost-block ${category.colorToken}${pulse ? ' pulse' : ''}`}
       style={{
         top: (startMin - DAY_START_MIN) * pxPerMin,
         height: Math.max((endMin - startMin) * pxPerMin, 14),

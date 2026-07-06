@@ -7,6 +7,7 @@ import {
   isSameDay,
   minutesOfDay,
 } from '../lib/time';
+import { usePendingAction, type PendingAction } from '../hermes/pending';
 import { useEventActions, useEvents } from '../state/EventsContext';
 import type { CalendarEvent, CategoryId } from '../state/types';
 import { CreatePopover } from './CreatePopover';
@@ -37,11 +38,37 @@ interface SelectedEvent {
   anchor: AnchorRect;
 }
 
+interface HermesGhost {
+  startMin: number;
+  endMin: number;
+  categoryId: CategoryId;
+  title: string;
+}
+
+/** The ghost a pending Hermes create/move projects onto `day`, if any. */
+function hermesGhostForDay(pending: PendingAction | null, day: Date): HermesGhost | null {
+  if (!pending || pending.kind === 'cancel' || !isSameDay(pending.day, day)) return null;
+  return {
+    startMin: pending.startMin,
+    endMin: pending.endMin,
+    categoryId: pending.kind === 'create' ? pending.categoryId : pending.event.categoryId,
+    title: pending.kind === 'create' ? pending.title : pending.event.title,
+  };
+}
+
+/** How a pending Hermes action marks an existing event, if at all. */
+function hermesMarkFor(pending: PendingAction | null, eventId: string): 'cancel' | 'source' | null {
+  if (!pending || pending.kind === 'create') return null;
+  if (pending.event.id !== eventId) return null;
+  return pending.kind === 'cancel' ? 'cancel' : 'source';
+}
+
 export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
+  const hermesPending = usePendingAction();
 
   const rangeStart = days[0];
   const rangeEnd = useMemo(() => addDays(days[days.length - 1], 1), [days]);
@@ -138,6 +165,7 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
           const isToday = isSameDay(day, today);
           const showDragGhost = drag !== null && drag.dayIndex === dayIndex;
           const showPendingGhost = pendingCreate !== null && pendingCreate.dayIndex === dayIndex;
+          const hermesGhost = hermesGhostForDay(hermesPending, day);
           return (
             <div
               key={day.toDateString()}
@@ -151,8 +179,19 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
                   positioned={positioned}
                   pxPerMin={pxPerMin}
                   isDragSource={positioned.event.id === dragSourceId}
+                  hermesMark={hermesMarkFor(hermesPending, positioned.event.id)}
                 />
               ))}
+              {hermesGhost && (
+                <GhostBlock
+                  startMin={hermesGhost.startMin}
+                  endMin={hermesGhost.endMin}
+                  pxPerMin={pxPerMin}
+                  categoryId={hermesGhost.categoryId}
+                  title={hermesGhost.title}
+                  pulse
+                />
+              )}
               {showDragGhost && (
                 <GhostBlock
                   startMin={drag.startMin}

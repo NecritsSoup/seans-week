@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { HermesLayer } from '../hermes/HermesLayer';
 import { addDays, addMonths, startOfDay } from '../lib/time';
 import { EventsProvider } from '../state/EventsContext';
 import { Stage, type ViewMode } from '../stage/Stage';
@@ -36,6 +37,12 @@ export function App() {
 
   useKeyboardShortcuts({ onToday: goToday, onPrev: goPrev, onNext: goNext, onView: setView });
 
+  /** Hermes moves the stage: to a day, a view, or both. */
+  const hermesNavigate = useCallback((day: Date | null, nextView: ViewMode | null) => {
+    if (day) setAnchor(startOfDay(day));
+    if (nextView) setView(nextView);
+  }, []);
+
   return (
     <EventsProvider>
       <ToastProvider>
@@ -50,6 +57,7 @@ export function App() {
           />
           <Stage view={view} anchor={anchor} onZoomToDay={zoomToDay} />
           <HermesFab />
+          <HermesLayer onNavigate={hermesNavigate} />
         </div>
       </ToastProvider>
     </EventsProvider>

@@ -7,18 +7,22 @@ interface EventBlockProps {
   pxPerMin: number;
   /** Dimmed while this event is being dragged to a new slot. */
   isDragSource: boolean;
+  /** Visual mark from a pending Hermes action: cancel target or move source. */
+  hermesMark?: 'cancel' | 'source' | null;
 }
 
-export function EventBlock({ positioned, pxPerMin, isDragSource }: EventBlockProps) {
+export function EventBlock({ positioned, pxPerMin, isDragSource, hermesMark }: EventBlockProps) {
   const { event, startMin, endMin, lane, lanes } = positioned;
   const category = categoryById(event.categoryId);
   const top = (startMin - DAY_START_MIN) * pxPerMin;
   const height = Math.max((endMin - startMin) * pxPerMin, 14);
   const width = 100 / lanes;
+  const markClass =
+    hermesMark === 'cancel' ? ' pending-cancel' : hermesMark === 'source' ? ' drag-source' : '';
 
   return (
     <div
-      className={`event-block ${category.colorToken}${isDragSource ? ' drag-source' : ''}`}
+      className={`event-block ${category.colorToken}${isDragSource ? ' drag-source' : ''}${markClass}`}
       data-event-id={event.id}
       style={{
         top,
