@@ -1,3 +1,4 @@
+import { expandTemplates, isOccurrenceId, subscribeTemplates } from './recurrence';
 import type { CalendarEvent, EventInput, EventPatch, EventStore } from './types';
 
 const STORAGE_KEY = 'seans-week:events:v1';
@@ -27,9 +28,12 @@ export class LocalEventStore implements EventStore {
   async list(rangeStart: string, rangeEnd: string): Promise<CalendarEvent[]> {
     const from = new Date(rangeStart).getTime();
     const to = new Date(rangeEnd).getTime();
-    return this.events
-      .filter((ev) => new Date(ev.start).getTime() < to && new Date(ev.end).getTime() > from)
-      .sort((a, b) => a.start.localeCompare(b.start));
+    const oneOffs = this.events.filter(
+      (ev) => new Date(ev.start).getTime() < to && new Date(ev.end).getTime() > from
+    );
+    return [...oneOffs, ...expandTemplates(rangeStart, rangeEnd)].sort((a, b) =>
+      a.start.localeCompare(b.start)
+    );
   }
 
   async create(input: EventInput): Promise<CalendarEvent> {
@@ -48,6 +52,10 @@ export class LocalEventStore implements EventStore {
   }
 
   async update(id: string, patch: EventPatch): Promise<CalendarEvent> {
+    if (isOccurrenceId(id)) {
+      // The UI asks scope first and edits the template or an exception.
+      throw new Error(`Recurring occurrence cannot be updated directly: ${id}`);
+    }
     const index = this.events.findIndex((ev) => ev.id === id);
     if (index === -1) throw new Error(`Event not found: ${id}`);
     const updated = { ...this.events[index], ...patch };
@@ -57,13 +65,30 @@ export class LocalEventStore implements EventStore {
   }
 
   async remove(id: string): Promise<void> {
+    if (isOccurrenceId(id)) {
+      // The UI asks scope first and skips the date or ends the template.
+      throw new Error(`Recurring occurrence cannot be removed directly: ${id}`);
+    }
     this.events = this.events.filter((ev) => ev.id !== id);
     this.persist();
   }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    // Template changes reshape what list() returns, so they notify too.
+    const unsubscribeTemplates = subscribeTemplates(listener);
+    return () => {
+      this.listeners.delete(listener);
+      unsubscribeTemplates();
+    };
+  }
+
+  /** Best-effort bulk removal — the seed's v1 → v2 migration sweep. */
+  async removeWhere(predicate: (ev: CalendarEvent) => boolean): Promise<void> {
+    const kept = this.events.filter((ev) => !predicate(ev));
+    if (kept.length === this.events.length) return;
+    this.events = kept;
+    this.persist();
   }
 
   /** True when nothing has ever been stored (used by the seed module). */

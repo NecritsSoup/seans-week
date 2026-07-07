@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { dateKey, isSameDay } from '../lib/time';
 import { useEventActions } from '../state/EventsContext';
+import { deleteTemplate, restoreException, upsertTemplate } from '../state/recurrence';
 import { Panel, useToast } from '../ui';
 import {
   appendLedger,
@@ -53,8 +54,16 @@ export function Ledger({ open, onClose }: LedgerProps) {
         await deleteEvent(undo.eventId);
       } else if (undo.kind === 'restore-times') {
         await updateEvent(undo.eventId, { start: undo.prevStart, end: undo.prevEnd });
-      } else {
+      } else if (undo.kind === 'restore-event') {
         await createEvent(undo.event);
+      } else if (undo.kind === 'restore-exception') {
+        restoreException(undo.templateId, undo.dateKey, undo.prev);
+        if (undo.removeEventId) await deleteEvent(undo.removeEventId);
+      } else if (undo.kind === 'restore-template') {
+        upsertTemplate(undo.template);
+      } else {
+        deleteTemplate(undo.templateId);
+        if (undo.restoreEvent) await createEvent(undo.restoreEvent);
       }
       markLedgerUndone(entry.id);
       showToast({ message: 'Undone — the calendar is as it was.' });

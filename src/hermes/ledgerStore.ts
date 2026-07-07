@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { RecurrenceException, RecurringTemplate } from '../state/recurrence';
 import type { CategoryId } from '../state/types';
 
 // Hermes's Ledger: a narrative record of everything he did — the legacy
@@ -12,6 +13,8 @@ export type LedgerType =
   | 'create'
   | 'move'
   | 'cancel'
+  /** Title/category changes (recurring scope edits). */
+  | 'edit'
   | 'todo'
   | 'brief'
   | 'error'
@@ -20,20 +23,32 @@ export type LedgerType =
   /** Email scrolls turned into to-dos or events. */
   | 'scroll';
 
+/** The fields needed to recreate a deleted one-off event. */
+export interface RestorableEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  categoryId: CategoryId;
+  allDay?: boolean;
+}
+
 export type LedgerUndo =
   | { kind: 'delete-created'; eventId: string }
   | { kind: 'restore-times'; eventId: string; prevStart: string; prevEnd: string }
+  | { kind: 'restore-event'; event: RestorableEvent }
+  /** This-day recurrence change: put the date's exception back (and drop a detached one-off). */
   | {
-      kind: 'restore-event';
-      event: {
-        id: string;
-        title: string;
-        start: string;
-        end: string;
-        categoryId: CategoryId;
-        allDay?: boolean;
-      };
-    };
+      kind: 'restore-exception';
+      templateId: string;
+      dateKey: string;
+      prev: RecurrenceException | null;
+      removeEventId?: string;
+    }
+  /** Every-week recurrence change: put the whole template snapshot back. */
+  | { kind: 'restore-template'; template: RecurringTemplate }
+  /** A template was created (or converted from a one-off): remove it, restore the one-off. */
+  | { kind: 'remove-template'; templateId: string; restoreEvent?: RestorableEvent };
 
 export interface LedgerEntry {
   id: string;
