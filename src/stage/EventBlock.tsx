@@ -19,10 +19,11 @@ export function EventBlock({ positioned, pxPerMin, isDragSource, hermesMark }: E
   const width = 100 / lanes;
   const markClass =
     hermesMark === 'cancel' ? ' pending-cancel' : hermesMark === 'source' ? ' drag-source' : '';
+  const recurringClass = event.recurring ? ' recurring' : '';
 
   return (
     <div
-      className={`event-block ${category.colorToken}${isDragSource ? ' drag-source' : ''}${markClass}`}
+      className={`event-block ${category.colorToken}${recurringClass}${isDragSource ? ' drag-source' : ''}${markClass}`}
       data-event-id={event.id}
       style={{
         top,
@@ -31,11 +32,16 @@ export function EventBlock({ positioned, pxPerMin, isDragSource, hermesMark }: E
         width: `calc(${width}% - 6px)`,
       }}
       role="button"
-      aria-label={`${event.title}, ${fmtRange(startMin, endMin)}`}
+      aria-label={`${event.title}, ${fmtRange(startMin, endMin)}${event.recurring ? ', repeats weekly' : ''}`}
     >
       <div className="resize-handle top" />
       <div className="ev-title">{event.title}</div>
       {height >= 30 && <div className="ev-time">{fmtRange(startMin, endMin)}</div>}
+      {event.recurring && (
+        <span className="ev-repeat" aria-hidden="true">
+          ↻
+        </span>
+      )}
       <div className="resize-handle bottom" />
     </div>
   );

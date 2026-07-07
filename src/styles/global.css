@@ -1139,6 +1139,107 @@ h1, h2, h3 {
   text-decoration: line-through;
 }
 
+/* ------------------------------------------------------------ recurring ---- */
+
+/* Repeat glyph on occurrence blocks: absolutely placed, no layout shift. */
+.event-block .ev-repeat {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--cat);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.event-block.recurring .ev-title {
+  padding-right: 12px;
+}
+
+/* Event popover: "Repeats weekly on Fridays" + stop repeating */
+.pop-repeat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-bottom: var(--space-3);
+}
+
+.pop-repeat-glyph {
+  color: var(--gold);
+}
+
+.pop-repeat-stop {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.pop-repeat-stop:hover {
+  color: var(--accent);
+}
+
+/* Scope chooser: "Just this Friday" / "Every week" */
+.scope-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.scope-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.scope-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.scope-option:hover,
+.scope-option:focus-visible {
+  border-color: var(--gold);
+  background: var(--panel-hi);
+  transform: translateY(-1px);
+}
+
+.scope-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.scope-option-note {
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+.scope-repeat {
+  color: var(--gold);
+}
+
+.scope-chooser .pop-actions {
+  margin-top: var(--space-1);
+}
+
 /* --------------------------------------------------- phase 3 surfaces ---- */
 
 /* Small buttons for scroll/task/settings rows */

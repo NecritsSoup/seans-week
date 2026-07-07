@@ -5,13 +5,16 @@ import {
   TOTAL_MIN,
   addDays,
   dateAtMinutes,
+  fmtClock,
   isSameDay,
   minutesOfDay,
   snapMinutes,
 } from '../lib/time';
-import { appendLedger } from '../hermes/ledgerStore';
+import { appendLedger, markLedgerUndone } from '../hermes/ledgerStore';
 import { usePendingAction, type PendingAction } from '../hermes/pending';
 import { useEventActions, useEvents } from '../state/EventsContext';
+import { weekdayName, type RecurrenceScope } from '../state/recurrence';
+import { moveOccurrenceOnly, moveWholeTemplate } from '../state/recurringOps';
 import { getTodos, toggleTodo } from '../state/todos';
 import type { CalendarEvent, CategoryId } from '../state/types';
 import { getDraggedTodo, TODO_DRAG_TYPE } from '../tasks/todoDrag';
@@ -20,10 +23,12 @@ import { EventBlock } from './EventBlock';
 import { EventPopover } from './EventPopover';
 import { GhostBlock } from './GhostBlock';
 import { NowLine } from './NowLine';
+import { ScopeChooser } from './ScopeChooser';
 import { HourLines, TimeAxis } from './TimeAxis';
 import { layoutDayEvents } from './layout';
 import { columnAnchorRect, gridPointAt, useGridDrag } from './useGridDrag';
-import type { AnchorRect } from './popoverPosition';
+import { popoverPosition, type AnchorRect } from './popoverPosition';
+import { useToast } from '../ui';
 
 interface TimeGridProps {
   /** The visible days: one for Day view, seven (Monday-start) for Week view. */
@@ -50,6 +55,16 @@ interface SelectedEvent {
   anchor: AnchorRect;
 }
 
+/** A dropped move/resize of a recurring occurrence, awaiting its scope. */
+interface ScopeAsk {
+  kind: 'move' | 'resize';
+  event: CalendarEvent;
+  dayIndex: number;
+  startMin: number;
+  endMin: number;
+  anchor: AnchorRect;
+}
+
 interface HermesGhost {
   startMin: number;
   endMin: number;
@@ -59,7 +74,8 @@ interface HermesGhost {
 
 /** The ghost a pending Hermes create/move projects onto `day`, if any. */
 function hermesGhostForDay(pending: PendingAction | null, day: Date): HermesGhost | null {
-  if (!pending || pending.kind === 'cancel' || !isSameDay(pending.day, day)) return null;
+  if (!pending || pending.kind === 'cancel' || pending.kind === 'recur') return null;
+  if (!isSameDay(pending.day, day)) return null;
   return {
     startMin: pending.startMin,
     endMin: pending.endMin,
@@ -81,12 +97,14 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
   const [todoDrop, setTodoDrop] = useState<{ dayIndex: number; startMin: number } | null>(null);
+  const [scopeAsk, setScopeAsk] = useState<ScopeAsk | null>(null);
   const hermesPending = usePendingAction();
+  const { showToast } = useToast();
 
   const rangeStart = days[0];
   const rangeEnd = useMemo(() => addDays(days[days.length - 1], 1), [days]);
   const events = useEvents(rangeStart, rangeEnd);
-  const { createEvent, updateEvent } = useEventActions();
+  const { createEvent, updateEvent, deleteEvent } = useEventActions();
 
   const eventsById = useMemo(() => new Map(events.map((ev) => [ev.id, ev])), [events]);
 
@@ -106,6 +124,10 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
     onCreate: (dayIndex, startMin, endMin, anchor) =>
       setPendingCreate({ dayIndex, startMin, endMin, anchor }),
     onMove: (event, dayIndex, startMin, endMin) => {
+      if (event.recurring) {
+        askScope('move', event, dayIndex, startMin, endMin);
+        return;
+      }
       void updateEvent(event.id, {
         start: dateAtMinutes(days[dayIndex], startMin).toISOString(),
         end: dateAtMinutes(days[dayIndex], endMin).toISOString(),
@@ -113,6 +135,11 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
     },
     onResize: (event, startMin, endMin) => {
       const day = new Date(event.start);
+      if (event.recurring) {
+        const dayIndex = Math.max(days.findIndex((d) => isSameDay(d, day)), 0);
+        askScope('resize', event, dayIndex, startMin, endMin);
+        return;
+      }
       void updateEvent(event.id, {
         start: dateAtMinutes(day, startMin).toISOString(),
         end: dateAtMinutes(day, endMin).toISOString(),
@@ -133,6 +160,73 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
     scroller.scrollTop = (focusMin - DAY_START_MIN) * pxPerMin;
     // Mount-only by design: keep the user's scroll position afterwards.
   }, []);
+
+  /* ---- recurring occurrences: ask scope before committing a drop ---- */
+
+  function askScope(
+    kind: 'move' | 'resize',
+    event: CalendarEvent,
+    dayIndex: number,
+    startMin: number,
+    endMin: number
+  ) {
+    const body = bodyRef.current;
+    setScopeAsk({
+      kind,
+      event,
+      dayIndex,
+      startMin,
+      endMin,
+      anchor: body
+        ? columnAnchorRect(body, dayIndex, startMin, endMin, pxPerMin)
+        : { left: 0, top: 0, width: 0, height: 0 },
+    });
+  }
+
+  async function applyScopeAsk(scope: RecurrenceScope) {
+    const ask = scopeAsk;
+    if (!ask) return;
+    setScopeAsk(null);
+    const targetDay = days[ask.dayIndex];
+    const dayName = weekdayName(new Date(ask.event.start).getDay());
+    const result =
+      scope === 'template'
+        ? moveWholeTemplate(ask.event, targetDay, ask.startMin, ask.endMin)
+        : await moveOccurrenceOnly(ask.event, targetDay, ask.startMin, ask.endMin, {
+            createEvent,
+            deleteEvent,
+          });
+    if (!result) return;
+    const verb = ask.kind === 'resize' ? 'Resized' : 'Moved';
+    const targetLabel = targetDay.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    const entry =
+      scope === 'template'
+        ? appendLedger(
+            'move',
+            `${verb} “${ask.event.title}” — now every ${weekdayName(targetDay.getDay())} at ${fmtClock(ask.startMin)}.`,
+            result.undo
+          )
+        : appendLedger(
+            'move',
+            `${verb} “${ask.event.title}” for ${targetLabel} only — other weeks keep their place.`,
+            result.undo
+          );
+    showToast({
+      message:
+        scope === 'template'
+          ? `${verb} “${ask.event.title}” — every week.`
+          : `${verb} “${ask.event.title}” — just this ${dayName}.`,
+      actionLabel: 'Undo',
+      onAction: () => {
+        void result.revert();
+        markLedgerUndone(entry.id);
+      },
+    });
+  }
 
   async function savePendingCreate(title: string, categoryId: CategoryId) {
     if (!pendingCreate) return;
@@ -211,7 +305,8 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
   const gridTemplateColumns = `var(--axis-width) repeat(${days.length}, minmax(0, 1fr))`;
   const weekClass = days.length > 1 ? ' week' : '';
   const today = new Date();
-  const dragSourceId = drag?.kind === 'move' ? drag.event.id : null;
+  const dragSourceId =
+    drag?.kind === 'move' ? drag.event.id : scopeAsk ? scopeAsk.event.id : null;
 
   return (
     <div className="grid-scroll" ref={scrollRef}>
@@ -288,6 +383,16 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
                   title={pendingCreate.title}
                 />
               )}
+              {scopeAsk !== null && scopeAsk.dayIndex === dayIndex && (
+                <GhostBlock
+                  startMin={scopeAsk.startMin}
+                  endMin={scopeAsk.endMin}
+                  pxPerMin={pxPerMin}
+                  categoryId={scopeAsk.event.categoryId}
+                  title={scopeAsk.event.title}
+                  pulse
+                />
+              )}
               {todoDrop !== null && todoDrop.dayIndex === dayIndex && (
                 <GhostBlock
                   startMin={todoDrop.startMin}
@@ -321,6 +426,39 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
           anchor={selected.anchor}
           onClose={() => setSelected(null)}
         />
+      )}
+      {scopeAsk && (
+        <>
+          <div
+            className="panel-backdrop"
+            style={{ background: 'transparent' }}
+            onClick={() => setScopeAsk(null)}
+          />
+          <div
+            className="popover"
+            style={popoverPosition(scopeAsk.anchor)}
+            role="dialog"
+            aria-label="Repeating event"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                setScopeAsk(null);
+              }
+            }}
+          >
+            <div className="meander popover-meander" />
+            <ScopeChooser
+              title={
+                scopeAsk.kind === 'resize'
+                  ? 'Resize this repeating event?'
+                  : 'Move this repeating event?'
+              }
+              dayName={weekdayName(new Date(scopeAsk.event.start).getDay())}
+              onChoose={(scope) => void applyScopeAsk(scope)}
+              onCancel={() => setScopeAsk(null)}
+            />
+          </div>
+        </>
       )}
     </div>
   );
