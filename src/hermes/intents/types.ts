@@ -22,6 +22,8 @@ export interface CreateIntent {
   day: Date;
   startMin: number;
   endMin: number;
+  /** "every friday" / "weekly": create a RecurringTemplate, not a one-off. */
+  repeatWeekly: boolean;
 }
 
 export interface MoveIntent {
@@ -40,6 +42,13 @@ export interface MoveIntent {
 
 export interface CancelIntent {
   kind: 'cancel';
+  query: string;
+  queryDay: Date | null;
+}
+
+/** "make friday's gym weekly": convert a found one-off into a template. */
+export interface RecurIntent {
+  kind: 'recur';
   query: string;
   queryDay: Date | null;
 }
@@ -65,6 +74,7 @@ export type ParsedIntent =
   | CreateIntent
   | MoveIntent
   | CancelIntent
+  | RecurIntent
   | NavigateIntent
   | TodoIntent
   | SearchIntent;

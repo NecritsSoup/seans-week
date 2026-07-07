@@ -14,9 +14,13 @@ export type PendingAction =
       day: Date;
       startMin: number;
       endMin: number;
+      /** Create a weekly RecurringTemplate instead of a one-off. */
+      repeatWeekly?: boolean;
     }
   | { kind: 'move'; event: CalendarEvent; day: Date; startMin: number; endMin: number }
-  | { kind: 'cancel'; event: CalendarEvent };
+  | { kind: 'cancel'; event: CalendarEvent }
+  /** Convert a one-off into a weekly template ("make friday's gym weekly"). */
+  | { kind: 'recur'; event: CalendarEvent };
 
 let pending: PendingAction | null = null;
 const listeners = new Set<() => void>();

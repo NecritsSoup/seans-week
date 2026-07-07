@@ -18,6 +18,10 @@ export interface CalendarEvent {
   categoryId: CategoryId;
   source: EventSource;
   allDay?: boolean;
+  /** Set on expanded occurrences of a weekly RecurringTemplate (local only). */
+  recurring?: boolean;
+  /** The RecurringTemplate an occurrence was expanded from. */
+  templateId?: string;
 }
 
 export interface EventInput {
