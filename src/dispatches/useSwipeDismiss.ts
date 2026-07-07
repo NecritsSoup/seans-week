@@ -39,6 +39,10 @@ const THRESHOLD = 0.4;
 /** Matches --dur-med, so the fly-out lands before the store removes the card. */
 const FLY_MS = 200;
 
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function useSwipeDismiss(onDismiss: () => void, disabled = false): SwipeDismiss {
   const [phase, setPhase] = useState<Phase>('idle');
   const [dx, setDx] = useState(0);
@@ -105,7 +109,7 @@ export function useSwipeDismiss(onDismiss: () => void, disabled = false): SwipeD
         settleBack();
         return;
       }
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (prefersReducedMotion()) {
         setPhase('idle');
         setDx(0);
         onDismiss();
@@ -144,8 +148,11 @@ export function useSwipeDismiss(onDismiss: () => void, disabled = false): SwipeD
         : {
             transform: phase === 'fly' ? 'translateX(110%)' : 'translateX(0)',
             opacity: phase === 'fly' ? 0 : 1,
-            transition:
-              'transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out)',
+            // The spring-back must not animate for reduced-motion users
+            // (inline styles would otherwise beat the media-query rules).
+            transition: prefersReducedMotion()
+              ? 'none'
+              : 'transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out)',
           };
 
   return { handlers, style, dragging: phase === 'drag' };
