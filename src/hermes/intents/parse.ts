@@ -383,6 +383,11 @@ function parseNavigation(lower: string, now: Date): NavigateIntent | null {
     return { kind: 'navigate', day: target.day, view: null, label: target.label };
   }
 
+  // "dispatches" / "inbox" / "suggestions" / "scrolls" summon the hub.
+  if (/^(dispatches|inbox|suggestions|scrolls)$/.test(t)) {
+    return { kind: 'navigate', day: null, view: null, surface: 'dispatches', label: 'the dispatches' };
+  }
+
   const viewMatch = /^(day|week|month)(\s+view)?$/.exec(t);
   if (viewMatch) {
     const view = viewMatch[1] as NavigateIntent['view'];

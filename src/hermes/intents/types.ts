@@ -57,6 +57,8 @@ export interface NavigateIntent {
   kind: 'navigate';
   day: Date | null;
   view: ViewMode | null;
+  /** A summonable surface instead of a stage move ("go to dispatches"). */
+  surface?: 'dispatches';
   label: string;
 }
 

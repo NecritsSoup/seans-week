@@ -1,7 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { DispatchesPanel } from '../dispatches/DispatchesPanel';
 import { HermesLayer } from '../hermes/HermesLayer';
 import { addDays, addMonths, startOfDay } from '../lib/time';
-import { ScrollsPanel } from '../scrolls/ScrollsPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { EventsProvider } from '../state/EventsContext';
 import { Stage, type ViewMode } from '../stage/Stage';
@@ -16,7 +16,7 @@ function initialView(): ViewMode {
 }
 
 /** The summonable side surfaces — at most one open at a time. */
-type Surface = 'scrolls' | 'tasks' | 'settings';
+type Surface = 'dispatches' | 'tasks' | 'settings';
 
 export function App() {
   const [view, setView] = useState<ViewMode>(initialView);
@@ -46,7 +46,7 @@ export function App() {
     setSurface((current) => (current === next ? null : next));
   }, []);
   const closeSurface = useCallback(() => setSurface(null), []);
-  const openScrolls = useCallback(() => toggleSurface('scrolls'), [toggleSurface]);
+  const openDispatches = useCallback(() => toggleSurface('dispatches'), [toggleSurface]);
   const openTasks = useCallback(() => toggleSurface('tasks'), [toggleSurface]);
   const openSettings = useCallback(() => toggleSurface('settings'), [toggleSurface]);
 
@@ -55,9 +55,18 @@ export function App() {
     onPrev: goPrev,
     onNext: goNext,
     onView: setView,
-    onScrolls: openScrolls,
+    onDispatches: openDispatches,
     onTasks: openTasks,
   });
+
+  // The Hermes Card and palette summon the hub by event ('hermes:dispatches').
+  useEffect(() => {
+    function onDispatches() {
+      setSurface('dispatches');
+    }
+    window.addEventListener('hermes:dispatches', onDispatches);
+    return () => window.removeEventListener('hermes:dispatches', onDispatches);
+  }, []);
 
   /** Hermes moves the stage: to a day, a view, or both. */
   const hermesNavigate = useCallback((day: Date | null, nextView: ViewMode | null) => {
@@ -81,7 +90,11 @@ export function App() {
           <Stage view={view} anchor={anchor} onZoomToDay={zoomToDay} />
           <HermesFab />
           <HermesLayer onNavigate={hermesNavigate} />
-          <ScrollsPanel open={surface === 'scrolls'} onClose={closeSurface} />
+          <DispatchesPanel
+            open={surface === 'dispatches'}
+            onClose={closeSurface}
+            onNavigate={hermesNavigate}
+          />
           <TasksPanel open={surface === 'tasks'} onClose={closeSurface} />
           <SettingsPanel open={surface === 'settings'} onClose={closeSurface} />
         </div>

@@ -16,6 +16,8 @@ import { appendLedger } from './ledgerStore';
 import { Palette, type PaletteSeed } from './Palette';
 import { Ledger } from './Ledger';
 import { isQuietToday } from './quiet';
+import { getSuggestions } from './suggestStore';
+import { getScrolls } from '../scrolls/scrollsStore';
 import { useHermesShortcuts } from './useHermesShortcuts';
 import { useStreaks, type StreakInfo } from './streaks';
 
@@ -104,7 +106,7 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
       const todays = events.filter((ev) => isSameDay(new Date(ev.start), now));
       const text =
         kind === 'morning'
-          ? morningBriefText(todays, now)
+          ? morningBriefText(todays, now, getScrolls().length + getSuggestions().length)
           : eveningBriefText(
               todays,
               events.filter((ev) => isSameDay(new Date(ev.start), addDays(now, 1))),

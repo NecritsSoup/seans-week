@@ -21,7 +21,9 @@ export type LedgerType =
   /** Google account and data-flow happenings (sign-in, sign-out, resets). */
   | 'sync'
   /** Email scrolls turned into to-dos or events. */
-  | 'scroll';
+  | 'scroll'
+  /** Hermes's own suggestions, accepted from the Dispatches hub. */
+  | 'suggest';
 
 /** The fields needed to recreate a deleted one-off event. */
 export interface RestorableEvent {
