@@ -14,6 +14,7 @@ import type {
   MoveIntent,
   NavigateIntent,
   ParsedIntent,
+  RecurIntent,
   TimeMatch,
 } from './types';
 
@@ -312,12 +313,31 @@ export function resolveMoveTimes(
   return { startMin, endMin };
 }
 
+/* ----------------------------------------------------------- recurrence ---- */
+
+const WEEKLY_DAY_RE = new RegExp(`\\b(?:every|each)\\s+(${WEEKDAY_ALT})s?\\b`);
+const WEEKLY_WORD_RE = /\b(?:weekly|every\s+week|each\s+week)\b/;
+
+/**
+ * Pull "every friday" / "weekly" out of a create body. The weekday itself
+ * is left behind so extractDate still anchors the first occurrence.
+ */
+function extractWeekly(body: string): { body: string; repeatWeekly: boolean } {
+  const day = WEEKLY_DAY_RE.exec(body);
+  if (day) return { body: body.replace(day[0], ` ${day[1]} `), repeatWeekly: true };
+  const word = WEEKLY_WORD_RE.exec(body);
+  if (word) return { body: body.replace(word[0], ' '), repeatWeekly: true };
+  return { body, repeatWeekly: false };
+}
+
 /* ---------------------------------------------------------------- verbs ---- */
 
 const CREATE_VERB = /^(add|new|schedule|book|create|plan|put)\b/;
 const MOVE_VERB = /^(move|push|reschedule|shift|bump|slide)\b/;
 const CANCEL_VERB = /^(cancel|delete|remove|drop|scratch|skip)\b/;
 const SEARCH_PREFIX = /^(find|search(?:\s+for)?|look\s+for|where(?:'s|\s+is))\s+/;
+const RECUR_RE =
+  /^make\s+(.+?)\s+(?:weekly|recurring|repeat(?:ing)?(?:\s+(?:weekly|every\s+week))?)[.!?]*$/;
 
 /* ---------------------------------------------------------- title/query ---- */
 
@@ -389,11 +409,12 @@ function stripMatch(text: string, match: { text: string } | null): string {
 }
 
 function parseCreate(body: string, raw: string, now: Date): CreateIntent {
-  const dateMatch = extractDate(body, now);
-  const afterDate = stripMatch(body, dateMatch);
+  const weekly = extractWeekly(body);
+  const dateMatch = extractDate(weekly.body, now);
+  const afterDate = stripMatch(weekly.body, dateMatch);
   const timeMatch = extractTime(afterDate);
   const { startMin, endMin } = resolveCreateTimes(timeMatch, raw.toLowerCase());
-  const categoryId = categoryFor(body) ?? 'work';
+  const categoryId = categoryFor(weekly.body) ?? 'work';
   const title = capitalize(tidy(stripMatch(afterDate, timeMatch)));
   return {
     kind: 'create',
@@ -402,6 +423,16 @@ function parseCreate(body: string, raw: string, now: Date): CreateIntent {
     day: dateMatch?.day ?? startOfDay(now),
     startMin,
     endMin,
+    repeatWeekly: weekly.repeatWeekly,
+  };
+}
+
+function parseRecur(body: string, now: Date): RecurIntent {
+  const dateMatch = extractDate(body, now);
+  return {
+    kind: 'recur',
+    query: cleanQuery(stripMatch(body, dateMatch)),
+    queryDay: dateMatch?.day ?? null,
   };
 }
 
@@ -477,6 +508,9 @@ export function parseCommand(rawInput: string, now: Date = new Date()): ParsedIn
 
   const nav = parseNavigation(lower, now);
   if (nav) return nav;
+
+  const recur = RECUR_RE.exec(lower);
+  if (recur) return parseRecur(recur[1].trim(), now);
 
   if (MOVE_VERB.test(lower)) return parseMove(lower.replace(MOVE_VERB, '').trim(), raw, now);
   if (CANCEL_VERB.test(lower)) return parseCancel(lower.replace(CANCEL_VERB, '').trim(), now);

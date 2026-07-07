@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   addDays,
   dateAtMinutes,
+  dateKey,
   fmtClock,
   fmtRange,
   minutesOfDay,
@@ -10,14 +11,26 @@ import {
 } from '../lib/time';
 import { categoryById } from '../state/categories';
 import { useEventActions, useEvents } from '../state/EventsContext';
+import {
+  createTemplate,
+  deleteTemplate,
+  weekdayName,
+  type RecurrenceScope,
+} from '../state/recurrence';
+import {
+  endSeries,
+  moveOccurrenceOnly,
+  moveWholeTemplate,
+  skipOccurrence,
+} from '../state/recurringOps';
 import { addTodo } from '../state/todos';
 import type { CalendarEvent } from '../state/types';
 import type { ViewMode } from '../stage/Stage';
 import { useToast } from '../ui';
 import { findEventsByQuery } from './intents/findEvent';
 import { parseCommand, resolveMoveTimes } from './intents/parse';
-import type { CancelIntent, MoveIntent } from './intents/types';
-import { appendLedger, markLedgerUndone } from './ledgerStore';
+import type { CancelIntent, MoveIntent, RecurIntent } from './intents/types';
+import { appendLedger, markLedgerUndone, type RestorableEvent } from './ledgerStore';
 import { clearPendingAction, setPendingAction, type PendingAction } from './pending';
 
 /**
@@ -42,12 +55,17 @@ interface PaletteProps {
 
 type PaletteMode =
   | { kind: 'input' }
-  | { kind: 'choose'; intent: MoveIntent | CancelIntent; candidates: CalendarEvent[] }
+  | {
+      kind: 'choose';
+      intent: MoveIntent | CancelIntent | RecurIntent;
+      candidates: CalendarEvent[];
+    }
   | { kind: 'confirm'; action: PendingAction; summary: string }
   | { kind: 'message'; text: string };
 
 const SUGGESTIONS = [
   'add gym friday 8am',
+  'add stretching every monday 7pm',
   'move friday’s gym to 9am',
   'cancel dinner thursday',
   'todo: email advisor',
@@ -71,6 +89,30 @@ function fmtWhen(day: Date, startMin: number, endMin: number): string {
 function fmtEventWhen(event: CalendarEvent): string {
   const start = new Date(event.start);
   return fmtWhen(start, minutesOfDay(start), minutesOfDay(new Date(event.end)));
+}
+
+/** 'Friday' for the day an event occurrence sits on. */
+function eventDayName(event: CalendarEvent): string {
+  return weekdayName(new Date(event.start).getDay());
+}
+
+/** The restore shape for undoing a delete of `event`. */
+function restorable(event: CalendarEvent): RestorableEvent {
+  return {
+    id: event.id,
+    title: event.title,
+    start: event.start,
+    end: event.end,
+    categoryId: event.categoryId,
+    allDay: event.allDay,
+  };
+}
+
+/** The day a pending action's ghost (or marked event) sits on. */
+function actionDay(action: PendingAction): Date {
+  return action.kind === 'cancel' || action.kind === 'recur'
+    ? startOfDay(new Date(action.event.start))
+    : action.day;
 }
 
 /** Loose title search for the QUERY intent — every hit, soonest first. */
@@ -141,8 +183,7 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     const { action, summary, onCommit } = seed;
     seedCommitRef.current = onCommit ?? null;
     setPendingAction(action);
-    const day = action.kind === 'cancel' ? startOfDay(new Date(action.event.start)) : action.day;
-    onNavigate(day, null);
+    onNavigate(actionDay(action), null);
     setMode({ kind: 'confirm', action, summary });
   }, [open, seed, onNavigate]);
 
@@ -162,17 +203,39 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
   function stageConfirm(action: PendingAction, summary: string) {
     setPendingAction(action);
     // Bring the affected day on stage so the ghost preview is visible.
-    const day =
-      action.kind === 'cancel' ? startOfDay(new Date(action.event.start)) : action.day;
-    onNavigate(day, null);
+    onNavigate(actionDay(action), null);
     setMode({ kind: 'confirm', action, summary });
   }
 
-  function resolveTarget(intent: MoveIntent | CancelIntent, event: CalendarEvent) {
+  function resolveTarget(intent: MoveIntent | CancelIntent | RecurIntent, event: CalendarEvent) {
+    if (intent.kind === 'recur') {
+      if (event.source === 'google') {
+        setMode({
+          kind: 'message',
+          text: 'Google events already repeat on Google’s side — I only weave local events into the weekly rhythm.',
+        });
+        return;
+      }
+      if (event.recurring) {
+        setMode({
+          kind: 'message',
+          text: `“${event.title}” already repeats every ${eventDayName(event)}.`,
+        });
+        return;
+      }
+      const startMin = minutesOfDay(new Date(event.start));
+      stageConfirm(
+        { kind: 'recur', event },
+        `Make “${event.title}” repeat every ${eventDayName(event)} at ${fmtClock(startMin)}`
+      );
+      return;
+    }
     if (intent.kind === 'cancel') {
       stageConfirm(
         { kind: 'cancel', event },
-        `Cancel “${event.title}” — ${fmtEventWhen(event)}`
+        `Cancel “${event.title}” — ${fmtEventWhen(event)}${
+          event.recurring ? ` · repeats every ${eventDayName(event)}` : ''
+        }`
       );
       return;
     }
@@ -188,11 +251,13 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     const day = intent.targetDay ?? startOfDay(origStart);
     stageConfirm(
       { kind: 'move', event, day, startMin, endMin },
-      `Move “${event.title}” to ${fmtWhen(day, startMin, endMin)}`
+      `Move “${event.title}” to ${fmtWhen(day, startMin, endMin)}${
+        event.recurring ? ` · repeats every ${eventDayName(event)}` : ''
+      }`
     );
   }
 
-  function runFind(intent: MoveIntent | CancelIntent) {
+  function runFind(intent: MoveIntent | CancelIntent | RecurIntent) {
     const candidates = findEventsByQuery(events, intent.query, intent.queryDay);
     if (candidates.length === 0) {
       setMode({
@@ -207,82 +272,185 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     }
   }
 
-  async function execute(action: PendingAction) {
+  async function execute(action: PendingAction, scope: RecurrenceScope = 'occurrence') {
     try {
       if (action.kind === 'create') {
-        const created = await createEvent({
-          title: action.title,
-          categoryId: action.categoryId,
-          start: dateAtMinutes(action.day, action.startMin).toISOString(),
-          end: dateAtMinutes(action.day, action.endMin).toISOString(),
+        if (action.repeatWeekly) {
+          const dayName = weekdayName(action.day.getDay());
+          const template = createTemplate({
+            title: action.title,
+            categoryId: action.categoryId,
+            weekday: action.day.getDay(),
+            startMin: action.startMin,
+            endMin: action.endMin,
+            sinceISO: dateKey(action.day),
+          });
+          const entry = appendLedger(
+            'create',
+            `“${action.title}” now repeats every ${dayName} at ${fmtClock(action.startMin)}.`,
+            { kind: 'remove-template', templateId: template.id }
+          );
+          showToast({
+            message: `Added “${action.title}” — every ${dayName}.`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              deleteTemplate(template.id);
+              markLedgerUndone(entry.id);
+            },
+          });
+        } else {
+          const created = await createEvent({
+            title: action.title,
+            categoryId: action.categoryId,
+            start: dateAtMinutes(action.day, action.startMin).toISOString(),
+            end: dateAtMinutes(action.day, action.endMin).toISOString(),
+          });
+          const entry = appendLedger(
+            'create',
+            `Added “${action.title}” — ${fmtWhen(action.day, action.startMin, action.endMin)} — at your request.`,
+            { kind: 'delete-created', eventId: created.id }
+          );
+          showToast({
+            message: `Added “${action.title}”.`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              void deleteEvent(created.id);
+              markLedgerUndone(entry.id);
+            },
+          });
+        }
+      } else if (action.kind === 'recur') {
+        const { event } = action;
+        const start = new Date(event.start);
+        const dayName = weekdayName(start.getDay());
+        const startMin = minutesOfDay(start);
+        const template = createTemplate({
+          title: event.title,
+          categoryId: event.categoryId,
+          weekday: start.getDay(),
+          startMin,
+          endMin: minutesOfDay(new Date(event.end)),
+          sinceISO: dateKey(startOfDay(start)),
         });
+        await deleteEvent(event.id);
+        const restoreEvent = restorable(event);
         const entry = appendLedger(
           'create',
-          `Added “${action.title}” — ${fmtWhen(action.day, action.startMin, action.endMin)} — at your request.`,
-          { kind: 'delete-created', eventId: created.id }
+          `“${event.title}” now repeats every ${dayName} at ${fmtClock(startMin)}.`,
+          { kind: 'remove-template', templateId: template.id, restoreEvent }
         );
         showToast({
-          message: `Added “${action.title}”.`,
+          message: `“${event.title}” now repeats every ${dayName}.`,
           actionLabel: 'Undo',
           onAction: () => {
-            void deleteEvent(created.id);
+            deleteTemplate(template.id);
+            void createEvent(restoreEvent);
             markLedgerUndone(entry.id);
           },
         });
       } else if (action.kind === 'move') {
         const { event, day, startMin, endMin } = action;
-        const prevStart = event.start;
-        const prevEnd = event.end;
-        await updateEvent(event.id, {
-          start: dateAtMinutes(day, startMin).toISOString(),
-          end: dateAtMinutes(day, endMin).toISOString(),
-        });
-        const entry = appendLedger(
-          'move',
-          `Moved “${event.title}” to ${fmtWhen(day, startMin, endMin)} at your request.`,
-          { kind: 'restore-times', eventId: event.id, prevStart, prevEnd }
-        );
-        showToast({
-          message: `Moved “${event.title}” to ${fmtClock(startMin)}.`,
-          actionLabel: 'Undo',
-          onAction: () => {
-            void updateEvent(event.id, { start: prevStart, end: prevEnd });
-            markLedgerUndone(entry.id);
-          },
-        });
+        if (event.recurring) {
+          const dayName = eventDayName(event);
+          const result =
+            scope === 'template'
+              ? moveWholeTemplate(event, day, startMin, endMin)
+              : await moveOccurrenceOnly(event, day, startMin, endMin, {
+                  createEvent,
+                  deleteEvent,
+                });
+          if (result) {
+            const entry =
+              scope === 'template'
+                ? appendLedger(
+                    'move',
+                    `“${event.title}” now repeats every ${weekdayName(day.getDay())} at ${fmtClock(startMin)}.`,
+                    result.undo
+                  )
+                : appendLedger(
+                    'move',
+                    `Moved “${event.title}” to ${fmtWhen(day, startMin, endMin)} — other weeks keep their place.`,
+                    result.undo
+                  );
+            showToast({
+              message:
+                scope === 'template'
+                  ? `Moved “${event.title}” — every week.`
+                  : `Moved “${event.title}” — just this ${dayName}.`,
+              actionLabel: 'Undo',
+              onAction: () => {
+                void result.revert();
+                markLedgerUndone(entry.id);
+              },
+            });
+          }
+        } else {
+          const prevStart = event.start;
+          const prevEnd = event.end;
+          await updateEvent(event.id, {
+            start: dateAtMinutes(day, startMin).toISOString(),
+            end: dateAtMinutes(day, endMin).toISOString(),
+          });
+          const entry = appendLedger(
+            'move',
+            `Moved “${event.title}” to ${fmtWhen(day, startMin, endMin)} at your request.`,
+            { kind: 'restore-times', eventId: event.id, prevStart, prevEnd }
+          );
+          showToast({
+            message: `Moved “${event.title}” to ${fmtClock(startMin)}.`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              void updateEvent(event.id, { start: prevStart, end: prevEnd });
+              markLedgerUndone(entry.id);
+            },
+          });
+        }
       } else {
         const { event } = action;
-        await deleteEvent(event.id);
-        const entry = appendLedger(
-          'cancel',
-          `Cancelled “${event.title}” (${fmtEventWhen(event)}) at your request.`,
-          {
-            kind: 'restore-event',
-            event: {
-              id: event.id,
-              title: event.title,
-              start: event.start,
-              end: event.end,
-              categoryId: event.categoryId,
-              allDay: event.allDay,
-            },
-          }
-        );
-        showToast({
-          message: `Cancelled “${event.title}”.`,
-          actionLabel: 'Undo',
-          onAction: () => {
-            void createEvent({
-              id: event.id,
-              title: event.title,
-              start: event.start,
-              end: event.end,
-              categoryId: event.categoryId,
-              allDay: event.allDay,
+        if (event.recurring) {
+          const dayName = eventDayName(event);
+          const result = scope === 'template' ? endSeries(event) : skipOccurrence(event);
+          if (result) {
+            const entry =
+              scope === 'template'
+                ? appendLedger(
+                    'cancel',
+                    `“${event.title}” no longer repeats every ${dayName} — past weeks remain.`,
+                    result.undo
+                  )
+                : appendLedger(
+                    'cancel',
+                    `Skipped “${event.title}” for ${fmtDay(new Date(event.start))} — the weekly rhythm continues.`,
+                    result.undo
+                  );
+            showToast({
+              message:
+                scope === 'template'
+                  ? `“${event.title}” no longer repeats.`
+                  : `Skipped “${event.title}” this ${dayName}.`,
+              actionLabel: 'Undo',
+              onAction: () => {
+                void result.revert();
+                markLedgerUndone(entry.id);
+              },
             });
-            markLedgerUndone(entry.id);
-          },
-        });
+          }
+        } else {
+          await deleteEvent(event.id);
+          const entry = appendLedger(
+            'cancel',
+            `Cancelled “${event.title}” (${fmtEventWhen(event)}) at your request.`,
+            { kind: 'restore-event', event: restorable(event) }
+          );
+          showToast({
+            message: `Cancelled “${event.title}”.`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              void createEvent(restorable(event));
+              markLedgerUndone(entry.id);
+            },
+          });
+        }
       }
       seedCommitRef.current?.();
       seedCommitRef.current = null;
@@ -327,15 +495,19 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
           day: intent.day,
           startMin: intent.startMin,
           endMin: intent.endMin,
+          repeatWeekly: intent.repeatWeekly,
         };
         stageConfirm(
           action,
-          `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)}`
+          intent.repeatWeekly
+            ? `Create “${intent.title}” — every ${weekdayName(intent.day.getDay())}, ${fmtRange(intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`
+            : `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)}`
         );
         break;
       }
       case 'move':
       case 'cancel':
+      case 'recur':
         runFind(intent);
         break;
     }
@@ -372,11 +544,15 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     if (!intent || mode.kind !== 'input') return null;
     switch (intent.kind) {
       case 'create':
-        return `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`;
+        return intent.repeatWeekly
+          ? `Create “${intent.title}” — every ${weekdayName(intent.day.getDay())}, ${fmtRange(intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`
+          : `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`;
       case 'move':
         return `Move ${intent.query || 'an event'}${intent.queryDay ? ` (${fmtDay(intent.queryDay)})` : ''}…`;
       case 'cancel':
         return `Cancel ${intent.query || 'an event'}${intent.queryDay ? ` (${fmtDay(intent.queryDay)})` : ''}…`;
+      case 'recur':
+        return `Make ${intent.query || 'an event'}${intent.queryDay ? ` (${fmtDay(intent.queryDay)})` : ''} repeat weekly…`;
       case 'navigate':
         return `Go to ${intent.label}`;
       case 'todo':
@@ -385,6 +561,14 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         return null;
     }
   })();
+
+  /** Recurring cancel/move confirms ask scope: "this friday" / "every friday". */
+  const confirmScopes =
+    mode.kind === 'confirm' &&
+    (mode.action.kind === 'move' || mode.action.kind === 'cancel') &&
+    mode.action.event.recurring
+      ? eventDayName(mode.action.event)
+      : null;
 
   return createPortal(
     <>
@@ -489,9 +673,26 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
                 <button className="btn" onClick={backToInput}>
                   Back <kbd>esc</kbd>
                 </button>
-                <button className="btn primary" onClick={() => void execute(mode.action)}>
-                  Confirm <kbd>⏎</kbd>
-                </button>
+                {confirmScopes ? (
+                  <>
+                    <button
+                      className="btn primary"
+                      onClick={() => void execute(mode.action, 'occurrence')}
+                    >
+                      This {confirmScopes} <kbd>⏎</kbd>
+                    </button>
+                    <button
+                      className="btn primary"
+                      onClick={() => void execute(mode.action, 'template')}
+                    >
+                      Every {confirmScopes}
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn primary" onClick={() => void execute(mode.action)}>
+                    Confirm <kbd>⏎</kbd>
+                  </button>
+                )}
               </div>
             </div>
             <div className="palette-note">A ghost of the change is on the grid behind me.</div>
