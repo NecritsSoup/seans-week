@@ -469,7 +469,11 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     if (!intent) return;
     switch (intent.kind) {
       case 'navigate':
-        onNavigate(intent.day, intent.view);
+        if (intent.surface === 'dispatches') {
+          window.dispatchEvent(new CustomEvent('hermes:dispatches'));
+        } else {
+          onNavigate(intent.day, intent.view);
+        }
         close();
         break;
       case 'todo': {

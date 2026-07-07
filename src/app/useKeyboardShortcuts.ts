@@ -6,8 +6,8 @@ interface ShortcutHandlers {
   onPrev: () => void;
   onNext: () => void;
   onView: (view: ViewMode) => void;
-  /** I — toggle the Scrolls inbox. */
-  onScrolls?: () => void;
+  /** I — toggle the Dispatches hub. */
+  onDispatches?: () => void;
   /** D — toggle the Tasks panel. */
   onTasks?: () => void;
 }
@@ -20,13 +20,13 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
-/** T = today, ArrowLeft/Right = prev/next, 1/2/3 = Day/Week/Month, I = scrolls, D = tasks. */
+/** T = today, ArrowLeft/Right = prev/next, 1/2/3 = Day/Week/Month, I = dispatches, D = tasks. */
 export function useKeyboardShortcuts({
   onToday,
   onPrev,
   onNext,
   onView,
-  onScrolls,
+  onDispatches,
   onTasks,
 }: ShortcutHandlers) {
   useEffect(() => {
@@ -40,8 +40,8 @@ export function useKeyboardShortcuts({
           break;
         case 'i':
         case 'I':
-          if (!onScrolls) return;
-          onScrolls();
+          if (!onDispatches) return;
+          onDispatches();
           break;
         case 'd':
         case 'D':
@@ -70,5 +70,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onToday, onPrev, onNext, onView, onScrolls, onTasks]);
+  }, [onToday, onPrev, onNext, onView, onDispatches, onTasks]);
 }

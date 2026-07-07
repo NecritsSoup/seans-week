@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { addDays, startOfDay } from '../lib/time';
+import { useScrolls } from '../scrolls/scrollsStore';
 import { useEvents } from '../state/EventsContext';
 import { THEMES, setTheme, useTheme, type ThemeName } from '../theme/theme';
 import { HERMES_ART, type HermesStyle } from './art';
@@ -9,6 +10,7 @@ import { pickHermesPose } from './pose';
 import { useQuietToday, setQuietToday } from './quiet';
 import { epigramOfDay } from './quotes';
 import { useStreaks } from './streaks';
+import { useSuggestions } from './suggestStore';
 
 const STYLE_FOR_THEME: Record<ThemeName, HermesStyle> = {
   vase: 'vase',
@@ -39,6 +41,7 @@ export function Card({ open, onClose, onOpenPalette, onOpenLedger }: CardProps) 
   const theme = useTheme();
   const quiet = useQuietToday();
   const streaks = useStreaks();
+  const dispatchCount = useScrolls().length + useSuggestions().length;
   const cardRef = useRef<HTMLDivElement>(null);
 
   const [todayStart] = useState(() => startOfDay(new Date()));
@@ -117,9 +120,23 @@ export function Card({ open, onClose, onOpenPalette, onOpenLedger }: CardProps) 
         </div>
 
         <div className="hermes-card-row">
+          <button
+            className="hermes-link"
+            onClick={() => {
+              onClose();
+              window.dispatchEvent(new CustomEvent('hermes:dispatches'));
+            }}
+          >
+            Dispatches
+            {dispatchCount > 0 && <span className="hermes-count tnum">{dispatchCount}</span>}
+            <kbd>I</kbd>
+          </button>
           <button className="hermes-link" onClick={onOpenLedger}>
             Open the Ledger <kbd>L</kbd>
           </button>
+        </div>
+
+        <div className="hermes-card-row">
           <label className="hermes-quiet">
             <input
               type="checkbox"

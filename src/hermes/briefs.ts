@@ -50,18 +50,33 @@ function hasOverlap(events: CalendarEvent[]): boolean {
   return false;
 }
 
-/** "Three events today; first is Gym at 7:00. Festina lente." */
-export function morningBriefText(todaysEvents: CalendarEvent[], now: Date = new Date()): string {
+/** " — three dispatches await", folded into the brief's first sentence. */
+function dispatchNote(count: number): string {
+  if (count <= 0) return '';
+  return count === 1
+    ? ' — one dispatch awaits'
+    : ` — ${countWord(count).toLowerCase()} dispatches await`;
+}
+
+/** "Three events today; first is Gym at 7:00 — two dispatches await. Festina lente." */
+export function morningBriefText(
+  todaysEvents: CalendarEvent[],
+  now: Date = new Date(),
+  dispatchCount = 0
+): string {
   const epigram = epigramOfDay(now).latin;
+  const note = dispatchNote(dispatchCount);
   if (todaysEvents.length === 0) {
-    return `A clear day — nothing on the calendar yet. ${epigram}.`;
+    return note
+      ? `A clear day, nothing on the calendar yet${note}. ${epigram}.`
+      : `A clear day — nothing on the calendar yet. ${epigram}.`;
   }
   const sorted = [...todaysEvents].sort((a, b) => a.start.localeCompare(b.start));
   const first = sorted[0];
   const firstTime = fmtClock(minutesOfDay(new Date(first.start)));
   const overlapNote = hasOverlap(sorted) ? ', two of them overlapping' : '';
   const plural = sorted.length === 1 ? 'event' : 'events';
-  return `${countWord(sorted.length)} ${plural} today${overlapNote}; first is ${first.title} at ${firstTime}. ${epigram}.`;
+  return `${countWord(sorted.length)} ${plural} today${overlapNote}; first is ${first.title} at ${firstTime}${note}. ${epigram}.`;
 }
 
 /** What happened, streak status, tomorrow's first event — two sentences. */

@@ -1304,7 +1304,7 @@ h1, h2, h3 {
   box-shadow: var(--shadow-sm);
 }
 
-/* Scrolls panel */
+/* Scrolls lane (Dispatches hub) */
 .scrolls-empty { display: grid; gap: var(--space-4); justify-items: start; }
 .scrolls-empty p { color: var(--text-soft); font-size: 13px; line-height: 1.55; }
 
@@ -1314,8 +1314,6 @@ h1, h2, h3 {
   line-height: 1.55;
 }
 
-.scrolls-section { margin-bottom: var(--space-5); }
-
 .scrolls-heading {
   font-family: var(--font-display);
   font-size: 13px;
@@ -1323,27 +1321,6 @@ h1, h2, h3 {
   text-transform: uppercase;
   color: var(--text-soft);
   margin-bottom: var(--space-2);
-}
-
-.scroll-row {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.scroll-row:last-child { border-bottom: none; }
-
-.scroll-subject { font-size: 13.5px; line-height: 1.4; }
-
-.scroll-meta {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--text-soft);
-}
-
-.scroll-actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .scrolls-loading { display: grid; gap: var(--space-3); }
@@ -1468,6 +1445,262 @@ h1, h2, h3 {
   font-size: 11.5px;
   font-style: italic;
   letter-spacing: 0.02em;
+}
+
+/* ------------------------------------------------------ dispatches hub ---- */
+
+.dispatch-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.dispatch-seal {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: var(--radius-round);
+  border: 1.5px solid var(--gold);
+  flex: 0 0 auto;
+}
+
+.dispatch-greeting {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+
+.dispatch-tabs {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: var(--space-4);
+}
+
+.dispatch-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--panel-hi);
+  border: none;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-soft);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.dispatch-tab + .dispatch-tab { border-left: 1px solid var(--border); }
+.dispatch-tab:hover { color: var(--text); }
+
+.dispatch-tab.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.dispatch-tab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-round);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dispatch-tab.active .dispatch-tab-count {
+  background: var(--accent-contrast);
+  color: var(--accent);
+}
+
+/* Lane switches cross-fade; cards enter with a slight stagger. */
+.dispatch-lane { animation: lane-fade var(--dur-med) var(--ease-out); }
+
+@keyframes lane-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.dispatch-section { margin-bottom: var(--space-5); }
+
+.dispatch-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-hi);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  box-shadow: var(--shadow-sm);
+  animation: dispatch-in var(--dur-slow) var(--ease-out) both;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.dispatch-card:hover { border-color: var(--gold); box-shadow: var(--shadow-md); }
+
+@keyframes dispatch-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.dispatch-card.leaving {
+  animation: dispatch-out var(--dur-med) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes dispatch-out {
+  to { opacity: 0; transform: translateX(24px); }
+}
+
+/* Accept: the gold rule flashes around the card before it goes. */
+.dispatch-card.accepted {
+  border-color: var(--gold);
+  animation: dispatch-accept 360ms var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes dispatch-accept {
+  0% { box-shadow: 0 0 0 0 transparent; }
+  35% { box-shadow: 0 0 0 3px var(--gold); }
+  100% { opacity: 0; transform: scale(0.98); box-shadow: 0 0 0 0 transparent; }
+}
+
+.dispatch-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.dispatch-icon {
+  color: var(--gold);
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.dispatch-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-meta {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+/* The "because" line: small, letterspaced, a museum wall label. */
+.dispatch-because {
+  margin-top: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  line-height: 1.7;
+}
+
+.dispatch-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+/* Recently handled: the last few suggestion/scroll ledger entries. */
+.dispatch-handled {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.dispatch-handled summary {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  user-select: none;
+}
+
+.dispatch-handled summary:hover { color: var(--text); }
+.dispatch-handled .ledger-entry { padding: 5px 0; }
+.dispatch-handled .ledger-time { flex: 0 0 52px; }
+.dispatch-handled .hermes-link { margin-top: var(--space-2); font-size: 12px; }
+
+/* UPenn lane: to-do rows reuse .todo-row; event rows get their own look. */
+.dispatch-row { animation: dispatch-in var(--dur-slow) var(--ease-out) both; }
+
+.upenn-event {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 6px;
+  font-size: 13px;
+  color: var(--text);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.upenn-event:hover { background: var(--panel-hi); }
+
+.upenn-event .cat-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-round);
+  background: var(--cat);
+  flex: 0 0 auto;
+}
+
+.upenn-event-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upenn-event-when {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+/* Dispatch count pill on the Hermes Card row. */
+.hermes-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: var(--radius-round);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-lane,
+  .dispatch-card,
+  .dispatch-row {
+    animation-duration: 1ms;
+  }
 }
 
 /* ------------------------------------------------------------ mobile ---- */
