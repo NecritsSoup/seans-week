@@ -7,7 +7,7 @@ import { EventsProvider } from '../state/EventsContext';
 import { Stage, type ViewMode } from '../stage/Stage';
 import { TasksPanel } from '../tasks/TasksPanel';
 import { ToastProvider } from '../ui';
-import { HermesFab } from './HermesFab';
+import { FabDock } from './FabDock';
 import { TopBar } from './TopBar';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
@@ -88,7 +88,7 @@ export function App() {
             onOpenSettings={openSettings}
           />
           <Stage view={view} anchor={anchor} onZoomToDay={zoomToDay} />
-          <HermesFab />
+          <FabDock />
           <HermesLayer onNavigate={hermesNavigate} />
           <DispatchesPanel
             open={surface === 'dispatches'}

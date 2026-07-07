@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { signIn, useGoogleAuth } from '../google/auth';
 import { HERMES_ART, type HermesStyle } from '../hermes/art';
 import { categoryFor } from '../hermes/intents/parse';
@@ -10,20 +10,23 @@ import type {
   ScrollSuggestion,
   StreakSuggestion,
   Suggestion,
-  SuggestionKind,
   TodoSuggestion,
 } from '../hermes/suggest';
 import {
   dismissSuggestion,
+  getSuggestionsComputedAt,
   markSuggestionHandled,
   refreshSuggestions,
+  subscribeSuggestions,
   useSuggestions,
 } from '../hermes/suggestStore';
 import { useLedgerUndo } from '../hermes/useLedgerUndo';
-import { addDays, fmtClock, fmtRange, minutesOfDay, startOfDay } from '../lib/time';
+import { addDays, fmtClock, fmtRange, minutesOfDay, relTime, startOfDay } from '../lib/time';
 import {
   dismissScroll,
+  getScrollsRefreshedAt,
   refreshScrolls,
+  subscribeScrolls,
   useScrolls,
   useScrollsStatus,
   type Scroll,
@@ -36,6 +39,10 @@ import type { CalendarEvent } from '../state/types';
 import type { ViewMode } from '../stage/Stage';
 import { useTheme, type ThemeName } from '../theme/theme';
 import { Panel, useToast } from '../ui';
+import { GhostCard } from './GhostCard';
+import { markDispatchesIntroduced } from './introStore';
+import { ScrollCard } from './ScrollCard';
+import { SuggestionCard } from './SuggestionCard';
 
 interface DispatchesPanelProps {
   open: boolean;
@@ -64,20 +71,6 @@ const KIND_HEADINGS: Record<Scroll['kind'], string> = {
   penn: 'From Penn',
 };
 
-const SUGGESTION_ICONS: Record<SuggestionKind, string> = {
-  pattern: '↻',
-  streak: '❧',
-  todo: '✎',
-  scroll: '✉',
-};
-
-const ACCEPT_LABELS: Record<SuggestionKind, string> = {
-  pattern: 'Make it weekly',
-  streak: 'Add it',
-  todo: 'Schedule',
-  scroll: 'Schedule',
-};
-
 /** How far back the pattern scan reaches / ahead the UPenn lane looks. */
 const LOOKBACK_DAYS = 42;
 const LOOKAHEAD_DAYS = 15;
@@ -92,14 +85,6 @@ function countWord(n: number): string {
   return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
 }
 
-/** "just now", "5h ago", "3d ago" — ports the legacy relTime. */
-function relTime(ms: number): string {
-  const hrs = Math.round((Date.now() - ms) / 3_600_000);
-  if (hrs < 1) return 'just now';
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
-}
-
 function fmtDay(day: Date): string {
   return day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
@@ -111,6 +96,14 @@ function suggestedSlot() {
 
 function staggerStyle(index: number): React.CSSProperties {
   return { animationDelay: `${Math.min(index, STAGGER_CAP) * STAGGER_MS}ms` };
+}
+
+/** "refreshed just now" / "refreshed 4m ago" — the live freshness caption. */
+function refreshedLabel(ms: number): string {
+  const mins = Math.floor((Date.now() - ms) / 60_000);
+  if (mins < 1) return 'refreshed just now';
+  if (mins < 60) return `refreshed ${mins}m ago`;
+  return `refreshed ${Math.floor(mins / 60)}h ago`;
 }
 
 /** One line in Hermes's voice, name used sparingly — two sentences at most. */
@@ -162,11 +155,28 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
   }, [events, todos, scrolls]);
 
   // …and lazily on open: a fresh look at the scrolls, a TTL-gated pass here.
+  // Opening through any door also counts as meeting the hub (coach mark).
   useEffect(() => {
     if (!open) return;
+    markDispatchesIntroduced();
     if (auth.status === 'signed-in') void refreshScrolls();
     refreshSuggestions(eventsRef.current);
   }, [open, auth.status]);
+
+  // The freshness caption: last successful fetch / suggestion pass, re-read
+  // every half minute while the panel is open so "just now" ages honestly.
+  const scrollsRefreshedAt = useSyncExternalStore(subscribeScrolls, getScrollsRefreshedAt);
+  const suggestionsComputedAt = useSyncExternalStore(
+    subscribeSuggestions,
+    getSuggestionsComputedAt
+  );
+  const refreshedAt = Math.max(scrollsRefreshedAt, suggestionsComputedAt);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
 
   const art = HERMES_ART[STYLE_FOR_THEME[theme]];
   const pendingTodos = useMemo(() => todos.filter((t) => !t.done), [todos]);
@@ -187,6 +197,41 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
     suggestions: suggestions.length,
     upenn: pendingTodos.length + upennEvents.length + pennScrolls.length,
   };
+
+  /* ------------------------------------------------- roving card focus ---- */
+
+  // One card per lane holds tabindex 0; ArrowUp/Down walk the list.
+  const cardRefs = useRef(new Map<string, HTMLElement>());
+  const [rovingId, setRovingId] = useState<string | null>(null);
+  useEffect(() => setRovingId(null), [lane]);
+
+  const laneCardIds = useMemo(() => {
+    if (lane === 'scrolls')
+      return [
+        ...scrolls.filter((s) => s.kind === 'meeting'),
+        ...scrolls.filter((s) => s.kind === 'penn'),
+      ].map((s) => s.id);
+    if (lane === 'suggestions') return suggestions.map((s) => s.id);
+    return pennScrolls.map((s) => s.id);
+  }, [lane, scrolls, suggestions, pennScrolls]);
+
+  const activeCardId =
+    rovingId && laneCardIds.includes(rovingId) ? rovingId : (laneCardIds[0] ?? null);
+
+  function registerCard(id: string) {
+    return (el: HTMLElement | null) => {
+      if (el) cardRefs.current.set(id, el);
+      else cardRefs.current.delete(id);
+    };
+  }
+
+  function moveFocus(fromId: string, delta: number) {
+    const idx = laneCardIds.indexOf(fromId);
+    if (idx === -1 || laneCardIds.length === 0) return;
+    const next = laneCardIds[(idx + delta + laneCardIds.length) % laneCardIds.length];
+    setRovingId(next);
+    cardRefs.current.get(next)?.focus();
+  }
 
   /* -------------------------------------------------------- scroll actions ---- */
 
@@ -334,64 +379,39 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
 
   function scrollCard(scroll: Scroll, index: number) {
     return (
-      <article
+      <ScrollCard
         key={scroll.id}
-        className={`dispatch-card${leaving.includes(scroll.id) ? ' leaving' : ''}`}
-        style={staggerStyle(index)}
-      >
-        <div className="dispatch-card-head">
-          <span className="dispatch-icon" aria-hidden="true">
-            ✉
-          </span>
-          <span className="dispatch-title">{scroll.subject}</span>
-          <span className="dispatch-meta tnum">{relTime(new Date(scroll.date).getTime())}</span>
-        </div>
-        <div className="dispatch-because">{scroll.from}</div>
-        <div className="dispatch-actions">
-          <button
-            className="btn small"
-            onClick={() => slideOut(scroll.id, () => dismissScroll(scroll.id))}
-          >
-            Dismiss
-          </button>
-          <button className="btn small" onClick={() => makeTodo(scroll)}>
-            Make to-do
-          </button>
-          <button className="btn small primary" onClick={() => scheduleScroll(scroll)}>
-            Schedule
-          </button>
-        </div>
-      </article>
+        scroll={scroll}
+        entranceStyle={staggerStyle(index)}
+        leaving={leaving.includes(scroll.id)}
+        tabIndex={scroll.id === activeCardId ? 0 : -1}
+        registerRef={registerCard(scroll.id)}
+        onFocusCard={() => setRovingId(scroll.id)}
+        onArrow={(delta) => moveFocus(scroll.id, delta)}
+        onDismiss={() => slideOut(scroll.id, () => dismissScroll(scroll.id))}
+        onSwipeDismiss={() => dismissScroll(scroll.id)}
+        onMakeTodo={() => makeTodo(scroll)}
+        onSchedule={() => scheduleScroll(scroll)}
+      />
     );
   }
 
   function suggestionCard(suggestion: Suggestion, index: number) {
-    const classes = [
-      'dispatch-card',
-      leaving.includes(suggestion.id) ? 'leaving' : '',
-      acceptedId === suggestion.id ? 'accepted' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
     return (
-      <article key={suggestion.id} className={classes} style={staggerStyle(index)}>
-        <div className="dispatch-card-head">
-          <span className="dispatch-icon" aria-hidden="true">
-            {SUGGESTION_ICONS[suggestion.kind]}
-          </span>
-          <span className="dispatch-title">{suggestion.title}</span>
-          <span className="dispatch-meta tnum">{suggestion.meta}</span>
-        </div>
-        <div className="dispatch-because">{suggestion.because}</div>
-        <div className="dispatch-actions">
-          <button className="btn small" onClick={() => dismiss(suggestion)}>
-            Dismiss
-          </button>
-          <button className="btn small primary" onClick={() => accept(suggestion)}>
-            {ACCEPT_LABELS[suggestion.kind]}
-          </button>
-        </div>
-      </article>
+      <SuggestionCard
+        key={suggestion.id}
+        suggestion={suggestion}
+        entranceStyle={staggerStyle(index)}
+        leaving={leaving.includes(suggestion.id)}
+        accepted={acceptedId === suggestion.id}
+        tabIndex={suggestion.id === activeCardId ? 0 : -1}
+        registerRef={registerCard(suggestion.id)}
+        onFocusCard={() => setRovingId(suggestion.id)}
+        onArrow={(delta) => moveFocus(suggestion.id, delta)}
+        onDismiss={() => dismiss(suggestion)}
+        onSwipeDismiss={() => dismissSuggestion(suggestion.id)}
+        onAccept={() => accept(suggestion)}
+      />
     );
   }
 
@@ -399,6 +419,42 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
     <>
       {auth.status !== 'signed-in' ? (
         <div className="scrolls-empty">
+          {/* Ghosted examples: the shape of the lane before the seal breaks. */}
+          <div className="ghost-stack">
+            <GhostCard
+              icon="✉"
+              title="Advance registration opens Monday"
+              meta="2h ago"
+              because="Registrar, UPenn"
+              actions={[
+                { label: 'Dismiss' },
+                { label: 'Make to-do' },
+                { label: 'Schedule', primary: true },
+              ]}
+            />
+            <GhostCard
+              icon="✉"
+              title="Notes from Tuesday’s project sync"
+              meta="1d ago"
+              because="Read.ai"
+              actions={[
+                { label: 'Dismiss' },
+                { label: 'Make to-do' },
+                { label: 'Schedule', primary: true },
+              ]}
+            />
+            <GhostCard
+              icon="✉"
+              title="Fall workshop calendar posted"
+              meta="3d ago"
+              because="Weingarten Center, UPenn"
+              actions={[
+                { label: 'Dismiss' },
+                { label: 'Make to-do' },
+                { label: 'Schedule', primary: true },
+              ]}
+            />
+          </div>
           <p>
             Hermes carries word from your inbox — meeting notes, reports, and anything new from
             Penn — but he needs the seal broken first.
@@ -426,7 +482,24 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
             </p>
           )}
           {scrollsStatus === 'ready' && scrolls.length === 0 && (
-            <p className="scrolls-note">No scrolls today — the roads are quiet.</p>
+            <>
+              <p className="scrolls-note">No scrolls today — the roads are quiet.</p>
+              <GhostCard
+                icon="✉"
+                title="Advance registration opens Monday"
+                meta="2h ago"
+                because="Registrar, UPenn"
+                actions={[
+                  { label: 'Dismiss' },
+                  { label: 'Make to-do' },
+                  { label: 'Schedule', primary: true },
+                ]}
+              />
+              <p className="scrolls-note">
+                When word arrives — meeting notes, reports, Penn letters — it lands here looking
+                like this.
+              </p>
+            </>
           )}
           {(['meeting', 'penn'] as const).map((kind) => {
             const rows = scrolls.filter((s) => s.kind === kind);
@@ -446,7 +519,28 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
   const suggestionsLane = (
     <>
       {suggestions.length === 0 ? (
-        <p className="scrolls-note">Nothing to propose — your rhythm keeps itself.</p>
+        <>
+          <p className="scrolls-note">Nothing to propose — your rhythm keeps itself.</p>
+          <div className="ghost-stack">
+            <GhostCard
+              icon="↻"
+              title="Make “Coffee with Dana” weekly"
+              meta="Every Tuesday, 9:00 – 10:00"
+              because="You’ve had “Coffee with Dana” on Tuesdays three weeks running."
+              actions={[{ label: 'Dismiss' }, { label: 'Make it weekly', primary: true }]}
+            />
+            <GhostCard
+              icon="❧"
+              title="Keep the reading streak"
+              meta="Thursday, 20:00 – 21:00"
+              because="Your reading streak is five days — nothing on the calendar this week yet."
+              actions={[{ label: 'Dismiss' }, { label: 'Add it', primary: true }]}
+            />
+          </div>
+          <p className="scrolls-note">
+            Hermes watches your last six weeks for rhythms worth keeping.
+          </p>
+        </>
       ) : (
         suggestions.map((s, i) => suggestionCard(s, i))
       )}
@@ -492,7 +586,14 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
           </button>
         </form>
         {pendingTodos.length === 0 ? (
-          <p className="scrolls-note">Nothing owed. A rare and enviable state.</p>
+          <>
+            <p className="scrolls-note">Nothing owed. A rare and enviable state.</p>
+            <div className="ghost-row" aria-hidden="true">
+              <input type="checkbox" disabled tabIndex={-1} />
+              <span className="todo-text">Email Dr. Alvarez about the seminar paper</span>
+              <span className="ghost-flag inline">Example</span>
+            </div>
+          </>
         ) : (
           <ul className="todo-list">
             {pendingTodos.map((todo, i) => (
@@ -513,7 +614,15 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
       <section className="dispatch-section">
         <h3 className="scrolls-heading">On the calendar — next two weeks</h3>
         {upennEvents.length === 0 ? (
-          <p className="scrolls-note">No Penn hours ahead — the quad is calm.</p>
+          <>
+            <p className="scrolls-note">No Penn hours ahead — the quad is calm.</p>
+            <div className="ghost-row cat-upenn" aria-hidden="true">
+              <span className="cat-dot" />
+              <span className="upenn-event-title">STAT 4300 office hours</span>
+              <span className="upenn-event-when tnum">Wed · 14:00</span>
+              <span className="ghost-flag inline">Example</span>
+            </div>
+          </>
         ) : (
           upennEvents.map((ev, i) => {
             const start = new Date(ev.start);
@@ -537,10 +646,20 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
 
       <section className="dispatch-section">
         <h3 className="scrolls-heading">From Penn</h3>
-        {auth.status !== 'signed-in' ? (
-          <p className="scrolls-note">Sign in on the Scrolls lane and Penn's letters land here.</p>
-        ) : pennScrolls.length === 0 ? (
-          <p className="scrolls-note">No word from Penn — enjoy the quiet.</p>
+        {auth.status !== 'signed-in' || pennScrolls.length === 0 ? (
+          <>
+            <div className="ghost-row" aria-hidden="true">
+              <span className="dispatch-icon">✉</span>
+              <span className="upenn-event-title">Move-out inspection windows posted</span>
+              <span className="upenn-event-when">College Houses</span>
+              <span className="ghost-flag inline">Example</span>
+            </div>
+            <p className="scrolls-note">
+              {auth.status !== 'signed-in'
+                ? "Sign in on the Scrolls lane and Penn's letters land here."
+                : 'No word from Penn — enjoy the quiet.'}
+            </p>
+          </>
         ) : (
           pennScrolls.map((scroll, i) => scrollCard(scroll, i))
         )}
@@ -552,7 +671,12 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
     <Panel open={open} onClose={onClose} title="Dispatches" width={560}>
       <div className="dispatch-head">
         <img className="dispatch-seal" src={art.icon} alt="" />
-        <p className="dispatch-greeting">{greetingText(scrolls.length, suggestions.length)}</p>
+        <div className="dispatch-head-words">
+          <p className="dispatch-greeting">{greetingText(scrolls.length, suggestions.length)}</p>
+          {refreshedAt > 0 && (
+            <p className="dispatch-refreshed tnum">{refreshedLabel(refreshedAt)}</p>
+          )}
+        </div>
       </div>
 
       <div className="dispatch-tabs" role="tablist" aria-label="Dispatch lanes">
