@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   DAY_END_MIN,
   DAY_START_MIN,
@@ -91,9 +91,14 @@ function hermesMarkFor(pending: PendingAction | null, eventId: string): 'cancel'
   return pending.kind === 'cancel' ? 'cancel' : 'source';
 }
 
-export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
+export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // On desktop, size the day to the available height so the whole span fits
+  // with no vertical scroll; on mobile fall back to the fixed density + scroll.
+  const [fitPxPerMin, setFitPxPerMin] = useState<number | null>(null);
+  const pxPerMin = fitPxPerMin ?? pxPerMinProp;
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
   const [todoDrop, setTodoDrop] = useState<{ dayIndex: number; startMin: number } | null>(null);
@@ -147,6 +152,31 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
     },
     onEventClick: (event, anchor) => setSelected({ event, anchor }),
   });
+
+  // Fit the day to the viewport on desktop: recompute px-per-minute from the
+  // scroll container's height whenever the window or surrounding panels resize.
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const header = headerRef.current;
+    if (!scroller || !header) return;
+    const desktop = window.matchMedia('(min-width: 721px)');
+    const measure = () => {
+      if (!desktop.matches) {
+        setFitPxPerMin(null);
+        return;
+      }
+      const avail = scroller.clientHeight - header.offsetHeight - 1;
+      setFitPxPerMin(avail > 60 ? avail / TOTAL_MIN : null);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    desktop.addEventListener('change', measure);
+    return () => {
+      ro.disconnect();
+      desktop.removeEventListener('change', measure);
+    };
+  }, []);
 
   // Initial scroll: bring the morning (or the current hour on today) into view.
   useEffect(() => {
@@ -310,7 +340,7 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
 
   return (
     <div className="grid-scroll" ref={scrollRef}>
-      <div className={`grid-header${weekClass}`} style={{ gridTemplateColumns }}>
+      <div ref={headerRef} className={`grid-header${weekClass}`} style={{ gridTemplateColumns }}>
         <div className="head-cell axis-spacer" />
         {days.map((day) => (
           <div
