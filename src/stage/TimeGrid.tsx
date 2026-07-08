@@ -429,11 +429,7 @@ export function TimeGrid({ days, pxPerMin = 0.9 }: TimeGridProps) {
       )}
       {scopeAsk && (
         <>
-          <div
-            className="panel-backdrop"
-            style={{ background: 'transparent' }}
-            onClick={() => setScopeAsk(null)}
-          />
+          <div className="popover-backdrop" onClick={() => setScopeAsk(null)} />
           <div
             className="popover"
             style={popoverPosition(scopeAsk.anchor)}
