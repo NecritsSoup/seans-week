@@ -91,6 +91,11 @@ function hermesMarkFor(pending: PendingAction | null, eventId: string): 'cancel'
   return pending.kind === 'cancel' ? 'cancel' : 'source';
 }
 
+// Legibility floor for the fit-to-viewport day: never compress below this
+// (~36px/hour). Past it the grid scrolls, auto-scrolled to the current hour —
+// the way Google Calendar and other calendars handle a too-short window.
+const MIN_PX_PER_MIN = 0.6;
+
 export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +171,13 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
         return;
       }
       const avail = scroller.clientHeight - header.offsetHeight - 1;
-      setFitPxPerMin(avail > 60 ? avail / TOTAL_MIN : null);
+      if (avail <= 60) {
+        setFitPxPerMin(null);
+        return;
+      }
+      // Fill the window when it legibly can; clamp at the floor otherwise so
+      // the day stays readable and scrolls (see MIN_PX_PER_MIN) instead.
+      setFitPxPerMin(Math.max(avail / TOTAL_MIN, MIN_PX_PER_MIN));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -178,18 +189,23 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
     };
   }, []);
 
-  // Initial scroll: bring the morning (or the current hour on today) into view.
+  // When the day overflows — on mobile, or a desktop window too short to fit
+  // the whole span — scroll the current hour into view once. A no-op when the
+  // day fits (scrollTop stays at 0). Runs after the density settles; the guard
+  // then preserves the user's own scroll position.
+  const didInitialScroll = useRef(false);
   useEffect(() => {
     const scroller = scrollRef.current;
-    if (!scroller) return;
+    if (!scroller || didInitialScroll.current) return;
+    if (scroller.scrollHeight <= scroller.clientHeight + 1) return;
     const now = new Date();
     const showsToday = days.some((d) => isSameDay(d, now));
     const focusMin = showsToday
       ? Math.max(minutesOfDay(now) - 90, DAY_START_MIN)
       : 8 * 60;
     scroller.scrollTop = (focusMin - DAY_START_MIN) * pxPerMin;
-    // Mount-only by design: keep the user's scroll position afterwards.
-  }, []);
+    didInitialScroll.current = true;
+  }, [pxPerMin, days]);
 
   /* ---- recurring occurrences: ask scope before committing a drop ---- */
 
