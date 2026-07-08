@@ -65,6 +65,8 @@ export function dismissScroll(id: string): void {
 
 let state: ScrollsState = { status: 'idle', scrolls: [] };
 let visible: Scroll[] = [];
+/** Epoch ms of the last successful fetch — 0 until one lands. */
+let refreshedAt = 0;
 const listeners = new Set<() => void>();
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let fetchFailureLogged = false;
@@ -81,6 +83,11 @@ function setState(next: ScrollsState): void {
 
 export function getScrollsStatus(): ScrollsStatus {
   return state.status;
+}
+
+/** When the scrolls were last fetched successfully (epoch ms; 0 = never). */
+export function getScrollsRefreshedAt(): number {
+  return refreshedAt;
 }
 
 /** Scrolls not yet dismissed, meetings first, newest within each kind. */
@@ -175,6 +182,7 @@ export function refreshScrolls(): Promise<void> {
         fetchThreads(PENN_QUERY, 'penn', 6),
       ]);
       const kept = meetings.filter((s) => !MEETING_EXCLUDE.test(s.subject));
+      refreshedAt = Date.now();
       setState({ status: 'ready', scrolls: [...kept, ...penn] });
       fetchFailureLogged = false;
     } catch {

@@ -1,6 +1,7 @@
 import { useGoogleAuth } from '../google/auth';
 import { addDays, isSameDay, startOfMonth, startOfWeek } from '../lib/time';
 import type { ViewMode } from '../stage/Stage';
+import { DispatchesButton } from './DispatchesButton';
 
 interface TopBarProps {
   view: ViewMode;
@@ -118,6 +119,7 @@ export function TopBar({
             </button>
           ))}
         </div>
+        <DispatchesButton />
         <GoogleChip onClick={onOpenSettings} />
         <button className="nav-btn gear" onClick={onOpenSettings} aria-label="Settings" title="Settings">
           ⚙

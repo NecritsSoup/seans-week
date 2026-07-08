@@ -69,6 +69,7 @@ const SUGGESTIONS = [
   'move friday’s gym to 9am',
   'cancel dinner thursday',
   'todo: email advisor',
+  'dispatches',
   'next week',
 ];
 

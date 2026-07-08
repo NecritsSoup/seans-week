@@ -90,6 +90,11 @@ export function getSuggestions(): Suggestion[] {
   return visible;
 }
 
+/** When the last suggestion pass ran (epoch ms; 0 = never). */
+export function getSuggestionsComputedAt(): number {
+  return computedAt;
+}
+
 export function subscribeSuggestions(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

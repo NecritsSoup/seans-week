@@ -93,3 +93,11 @@ export function fmtClock(minutes: number): string {
 export function fmtRange(startMin: number, endMin: number): string {
   return `${fmtClock(startMin)} – ${fmtClock(endMin)}`;
 }
+
+/** "just now", "5h ago", "3d ago" — ports the legacy relTime. */
+export function relTime(ms: number): string {
+  const hrs = Math.round((Date.now() - ms) / 3_600_000);
+  if (hrs < 1) return 'just now';
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
