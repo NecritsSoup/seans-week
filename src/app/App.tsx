@@ -6,7 +6,7 @@ import { SettingsPanel } from '../settings/SettingsPanel';
 import { EventsProvider } from '../state/EventsContext';
 import { Stage, type ViewMode } from '../stage/Stage';
 import { TasksPanel } from '../tasks/TasksPanel';
-import { ToastProvider } from '../ui';
+import { ToastBridge, ToastProvider } from '../ui';
 import { FabDock } from './FabDock';
 import { TopBar } from './TopBar';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
@@ -77,6 +77,7 @@ export function App() {
   return (
     <EventsProvider>
       <ToastProvider>
+        <ToastBridge />
         <div className="agora">
           <TopBar
             view={view}
