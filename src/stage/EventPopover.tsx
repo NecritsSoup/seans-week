@@ -130,7 +130,7 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
 
   return (
     <>
-      <div className="panel-backdrop" style={{ background: 'transparent' }} onClick={onClose} />
+      <div className="popover-backdrop" onClick={onClose} />
       <div
         className="popover"
         style={{ left, top }}

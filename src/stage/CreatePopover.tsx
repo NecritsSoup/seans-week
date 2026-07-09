@@ -39,7 +39,7 @@ export function CreatePopover({
 
   return (
     <>
-      <div className="panel-backdrop" style={{ background: 'transparent' }} onClick={onCancel} />
+      <div className="popover-backdrop" onClick={onCancel} />
       <div
         className="popover"
         style={{ left, top }}
