@@ -1564,6 +1564,20 @@ h1, h2, h3 {
   line-height: 1.5;
 }
 
+/* A quiet link inside a settings note (the templates → Google migration). */
+.settings-inline-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-inline-link:hover { text-decoration: underline; }
+
+.settings-inline-link:disabled { color: var(--text-soft); cursor: default; }
+
 .panel-body .gold-rule { margin: var(--space-4) 0; }
 
 /* Event popover: origin line for Google events */
