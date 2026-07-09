@@ -62,10 +62,14 @@ function GoogleChip({ onClick }: { onClick: () => void }) {
       ? (auth.email ?? 'Google — connected')
       : auth.status === 'connecting'
         ? 'Connecting…'
-        : 'Not signed in';
+        : auth.status === 'expired'
+          ? 'Session expired — reconnect'
+          : 'Not signed in';
+  const stateClass =
+    auth.status === 'signed-in' ? ' on' : auth.status === 'expired' ? ' expired' : '';
   return (
     <button
-      className={`status-chip${auth.status === 'signed-in' ? ' on' : ''}`}
+      className={`status-chip${stateClass}`}
       onClick={onClick}
       title="Google account (Settings)"
     >

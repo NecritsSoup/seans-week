@@ -3,21 +3,17 @@ import { createPortal } from 'react-dom';
 import {
   addDays,
   dateAtMinutes,
-  dateKey,
   fmtClock,
   fmtRange,
   minutesOfDay,
   startOfDay,
 } from '../lib/time';
+import { isSignedIn } from '../google/auth';
 import { categoryById } from '../state/categories';
 import { useEventActions, useEvents } from '../state/EventsContext';
+import { weekdayName, type RecurrenceScope } from '../state/recurrence';
 import {
-  createTemplate,
-  deleteTemplate,
-  weekdayName,
-  type RecurrenceScope,
-} from '../state/recurrence';
-import {
+  createWeeklyRhythm,
   endSeries,
   moveOccurrenceOnly,
   moveWholeTemplate,
@@ -210,17 +206,18 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
 
   function resolveTarget(intent: MoveIntent | CancelIntent | RecurIntent, event: CalendarEvent) {
     if (intent.kind === 'recur') {
-      if (event.source === 'google') {
-        setMode({
-          kind: 'message',
-          text: 'Google events already repeat on Google’s side — I only weave local events into the weekly rhythm.',
-        });
-        return;
-      }
       if (event.recurring) {
         setMode({
           kind: 'message',
           text: `“${event.title}” already repeats every ${eventDayName(event)}.`,
+        });
+        return;
+      }
+      if (event.source === 'google' && !isSignedIn()) {
+        // The session lapsed: the event shows, but Google will not take writes.
+        setMode({
+          kind: 'message',
+          text: 'The Google session has expired — reconnect in Settings and I will weave it into the weekly rhythm.',
         });
         return;
       }
@@ -278,24 +275,26 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
       if (action.kind === 'create') {
         if (action.repeatWeekly) {
           const dayName = weekdayName(action.day.getDay());
-          const template = createTemplate({
+          const rhythm = await createWeeklyRhythm({
             title: action.title,
             categoryId: action.categoryId,
             weekday: action.day.getDay(),
             startMin: action.startMin,
             endMin: action.endMin,
-            sinceISO: dateKey(action.day),
+            sinceDay: action.day,
           });
           const entry = appendLedger(
             'create',
-            `“${action.title}” now repeats every ${dayName} at ${fmtClock(action.startMin)}.`,
-            { kind: 'remove-template', templateId: template.id }
+            `“${action.title}” now repeats every ${dayName} at ${fmtClock(action.startMin)}${
+              rhythm.where === 'google' ? ' — a real series on Google Calendar' : ''
+            }.`,
+            rhythm.undo
           );
           showToast({
             message: `Added “${action.title}” — every ${dayName}.`,
             actionLabel: 'Undo',
             onAction: () => {
-              deleteTemplate(template.id);
+              void Promise.resolve(rhythm.revert()).catch(() => {});
               markLedgerUndone(entry.id);
             },
           });
@@ -325,27 +324,31 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         const start = new Date(event.start);
         const dayName = weekdayName(start.getDay());
         const startMin = minutesOfDay(start);
-        const template = createTemplate({
+        const restoreEvent = restorable(event);
+        const rhythm = await createWeeklyRhythm({
           title: event.title,
           categoryId: event.categoryId,
           weekday: start.getDay(),
           startMin,
           endMin: minutesOfDay(new Date(event.end)),
-          sinceISO: dateKey(startOfDay(start)),
+          sinceDay: startOfDay(start),
+          restoreEvent,
         });
         await deleteEvent(event.id);
-        const restoreEvent = restorable(event);
         const entry = appendLedger(
           'create',
-          `“${event.title}” now repeats every ${dayName} at ${fmtClock(startMin)}.`,
-          { kind: 'remove-template', templateId: template.id, restoreEvent }
+          `“${event.title}” now repeats every ${dayName} at ${fmtClock(startMin)}${
+            rhythm.where === 'google' ? ' — a real series on Google Calendar' : ''
+          }.`,
+          rhythm.undo
         );
         showToast({
           message: `“${event.title}” now repeats every ${dayName}.`,
           actionLabel: 'Undo',
           onAction: () => {
-            deleteTemplate(template.id);
-            void createEvent(restoreEvent);
+            void Promise.resolve(rhythm.revert())
+              .then(() => createEvent(restoreEvent))
+              .catch(() => {});
             markLedgerUndone(entry.id);
           },
         });
@@ -355,7 +358,7 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
           const dayName = eventDayName(event);
           const result =
             scope === 'template'
-              ? moveWholeTemplate(event, day, startMin, endMin)
+              ? await moveWholeTemplate(event, day, startMin, endMin)
               : await moveOccurrenceOnly(event, day, startMin, endMin, {
                   createEvent,
                   deleteEvent,
@@ -410,7 +413,8 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         const { event } = action;
         if (event.recurring) {
           const dayName = eventDayName(event);
-          const result = scope === 'template' ? endSeries(event) : skipOccurrence(event);
+          const result =
+            scope === 'template' ? await endSeries(event) : await skipOccurrence(event);
           if (result) {
             const entry =
               scope === 'template'

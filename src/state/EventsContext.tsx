@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { CompositeEventStore } from '../google/compositeStore';
-import { GoogleCalendarStore } from '../google/googleStore';
+import { getGoogleCalendarStore } from '../google/googleStore';
 import { LocalEventStore } from './localStore';
 import { resetDemoData, seedIfNeeded } from './seed';
 import type { CalendarEvent, EventInput, EventPatch, EventStore } from './types';
@@ -24,10 +24,12 @@ interface EventsContextValue {
 const EventsContext = createContext<EventsContextValue | null>(null);
 
 export function EventsProvider({ children }: { children: ReactNode }) {
-  // Local truth always; Google truth merged in when signed in.
+  // Local truth always; Google truth merged in when signed in. The Google
+  // store is the shared instance the recurrence ops modules also reach.
   const stores = useMemo(() => {
     const local = new LocalEventStore();
-    return { local, composite: new CompositeEventStore(local, new GoogleCalendarStore()) };
+    const google = getGoogleCalendarStore();
+    return { local, google, composite: new CompositeEventStore(local, google) };
   }, []);
   const store = stores.composite;
   const [version, setVersion] = useState(0);
@@ -43,6 +45,13 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       unsubscribe();
     };
   }, [store, stores.local]);
+
+  // Background Google sync: polls while visible and signed in, refreshes on
+  // focus and after writes. Detaches cleanly with the provider.
+  useEffect(() => {
+    stores.google.startSync();
+    return () => stores.google.stopSync();
+  }, [stores.google]);
 
   const resetDemo = useCallback(() => resetDemoData(stores.local), [stores.local]);
 

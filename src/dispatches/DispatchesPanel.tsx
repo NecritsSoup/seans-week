@@ -33,7 +33,8 @@ import {
 } from '../scrolls/scrollsStore';
 import { categoryById } from '../state/categories';
 import { useEvents } from '../state/EventsContext';
-import { createTemplate, deleteTemplate, parseDateKey, weekdayName } from '../state/recurrence';
+import { parseDateKey, weekdayName } from '../state/recurrence';
+import { createWeeklyRhythm } from '../state/recurringOps';
 import { addTodo, toggleTodo, useTodos } from '../state/todos';
 import type { CalendarEvent } from '../state/types';
 import type { ViewMode } from '../stage/Stage';
@@ -283,26 +284,34 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
   function accept(suggestion: Suggestion) {
     if (suggestion.kind === 'pattern') {
       const dayName = weekdayName(suggestion.weekday);
-      const template = createTemplate({
+      // Signed in this becomes a real Google series; signed out, a template.
+      void createWeeklyRhythm({
         title: suggestion.eventTitle,
         categoryId: suggestion.categoryId,
         weekday: suggestion.weekday,
         startMin: suggestion.startMin,
         endMin: suggestion.endMin,
-      });
-      const entry = appendLedger(
-        'suggest',
-        `Noticed the rhythm and made “${suggestion.eventTitle}” weekly — every ${dayName} at ${fmtClock(suggestion.startMin)}.`,
-        { kind: 'remove-template', templateId: template.id }
-      );
-      showToast({
-        message: `“${suggestion.eventTitle}” — every ${dayName} now.`,
-        actionLabel: 'Undo',
-        onAction: () => {
-          deleteTemplate(template.id);
-          markLedgerUndone(entry.id);
-        },
-      });
+      })
+        .then((rhythm) => {
+          const entry = appendLedger(
+            'suggest',
+            `Noticed the rhythm and made “${suggestion.eventTitle}” weekly — every ${dayName} at ${fmtClock(suggestion.startMin)}${
+              rhythm.where === 'google' ? ', on Google Calendar' : ''
+            }.`,
+            rhythm.undo
+          );
+          showToast({
+            message: `“${suggestion.eventTitle}” — every ${dayName} now.`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              void Promise.resolve(rhythm.revert()).catch(() => {});
+              markLedgerUndone(entry.id);
+            },
+          });
+        })
+        .catch(() => {
+          // Google declined the series — the store already spoke up.
+        });
       // Let the gold flash land before the card goes.
       setAcceptedId(suggestion.id);
       window.setTimeout(() => {

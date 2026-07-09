@@ -35,10 +35,26 @@ export interface RestorableEvent {
   allDay?: boolean;
 }
 
+/** A PATCH body that puts a Google recurring parent back the way it was. */
+export interface GoogleParentPatch {
+  summary?: string;
+  start?: { dateTime: string; timeZone?: string };
+  end?: { dateTime: string; timeZone?: string };
+  recurrence?: string[];
+  /** 'confirmed' resurrects a soft-deleted parent, series and all. */
+  status?: 'confirmed';
+}
+
 export type LedgerUndo =
   | { kind: 'delete-created'; eventId: string }
   | { kind: 'restore-times'; eventId: string; prevStart: string; prevEnd: string }
   | { kind: 'restore-event'; event: RestorableEvent }
+  /** Put an event's fields back (this-day edits on Google instances). */
+  | {
+      kind: 'restore-patch';
+      eventId: string;
+      patch: { title?: string; start?: string; end?: string; categoryId?: CategoryId };
+    }
   /** This-day recurrence change: put the date's exception back (and drop a detached one-off). */
   | {
       kind: 'restore-exception';
@@ -50,7 +66,18 @@ export type LedgerUndo =
   /** Every-week recurrence change: put the whole template snapshot back. */
   | { kind: 'restore-template'; template: RecurringTemplate }
   /** A template was created (or converted from a one-off): remove it, restore the one-off. */
-  | { kind: 'remove-template'; templateId: string; restoreEvent?: RestorableEvent };
+  | { kind: 'remove-template'; templateId: string; restoreEvent?: RestorableEvent }
+  /** Every-week change on a Google series: PATCH the parent back. */
+  | { kind: 'g-restore-parent'; seriesId: string; title: string; body: GoogleParentPatch }
+  /** A Google series was created (or converted, or migrated): delete the
+   *  parent, restore the one-off or the local template it replaced. */
+  | {
+      kind: 'g-remove-series';
+      seriesId: string;
+      title: string;
+      restoreEvent?: RestorableEvent;
+      restoreTemplate?: RecurringTemplate;
+    };
 
 export interface LedgerEntry {
   id: string;

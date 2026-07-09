@@ -1386,6 +1386,11 @@ h1, h2, h3 {
   opacity: 1;
 }
 
+.status-chip.expired .status-dot {
+  background: var(--cat-work);
+  opacity: 1;
+}
+
 .nav-btn.gear { font-size: 15px; }
 
 /* Topbar Dispatches entry: sealed-scroll button + authoritative count. */
@@ -1558,6 +1563,20 @@ h1, h2, h3 {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* A quiet link inside a settings note (the templates → Google migration). */
+.settings-inline-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-inline-link:hover { text-decoration: underline; }
+
+.settings-inline-link:disabled { color: var(--text-soft); cursor: default; }
 
 .panel-body .gold-rule { margin: var(--space-4) 0; }
 
