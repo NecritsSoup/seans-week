@@ -14,7 +14,11 @@ import { appendLedger, markLedgerUndone } from '../hermes/ledgerStore';
 import { usePendingAction, type PendingAction } from '../hermes/pending';
 import { useEventActions, useEvents } from '../state/EventsContext';
 import { weekdayName, type RecurrenceScope } from '../state/recurrence';
-import { moveOccurrenceOnly, moveWholeTemplate } from '../state/recurringOps';
+import {
+  moveOccurrenceOnly,
+  moveWholeTemplate,
+  type RecurringOpResult,
+} from '../state/recurringOps';
 import { getTodos, toggleTodo } from '../state/todos';
 import type { CalendarEvent, CategoryId } from '../state/types';
 import { getDraggedTodo, TODO_DRAG_TYPE } from '../tasks/todoDrag';
@@ -235,13 +239,18 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
     setScopeAsk(null);
     const targetDay = days[ask.dayIndex];
     const dayName = weekdayName(new Date(ask.event.start).getDay());
-    const result =
-      scope === 'template'
-        ? moveWholeTemplate(ask.event, targetDay, ask.startMin, ask.endMin)
-        : await moveOccurrenceOnly(ask.event, targetDay, ask.startMin, ask.endMin, {
-            createEvent,
-            deleteEvent,
-          });
+    let result: RecurringOpResult | null;
+    try {
+      result =
+        scope === 'template'
+          ? await moveWholeTemplate(ask.event, targetDay, ask.startMin, ask.endMin)
+          : await moveOccurrenceOnly(ask.event, targetDay, ask.startMin, ask.endMin, {
+              createEvent,
+              deleteEvent,
+            });
+    } catch {
+      return; // Google rejected it — the store already rolled back and spoke up
+    }
     if (!result) return;
     const verb = ask.kind === 'resize' ? 'Resized' : 'Moved';
     const targetLabel = targetDay.toLocaleDateString(undefined, {

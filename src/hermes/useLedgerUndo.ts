@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { removeGoogleSeries, restoreGoogleParent } from '../google/googleSeriesOps';
 import { useEventActions } from '../state/EventsContext';
 import { deleteTemplate, restoreException, upsertTemplate } from '../state/recurrence';
 import { useToast } from '../ui';
@@ -28,11 +29,19 @@ export function useLedgerUndo(): (entry: LedgerEntry) => Promise<void> {
           await updateEvent(undo.eventId, { start: undo.prevStart, end: undo.prevEnd });
         } else if (undo.kind === 'restore-event') {
           await createEvent(undo.event);
+        } else if (undo.kind === 'restore-patch') {
+          await updateEvent(undo.eventId, undo.patch);
         } else if (undo.kind === 'restore-exception') {
           restoreException(undo.templateId, undo.dateKey, undo.prev);
           if (undo.removeEventId) await deleteEvent(undo.removeEventId);
         } else if (undo.kind === 'restore-template') {
           upsertTemplate(undo.template);
+        } else if (undo.kind === 'g-restore-parent') {
+          await restoreGoogleParent(undo.seriesId, undo.body);
+        } else if (undo.kind === 'g-remove-series') {
+          await removeGoogleSeries(undo.seriesId, undo.title);
+          if (undo.restoreEvent) await createEvent(undo.restoreEvent);
+          if (undo.restoreTemplate) upsertTemplate(undo.restoreTemplate);
         } else {
           deleteTemplate(undo.templateId);
           if (undo.restoreEvent) await createEvent(undo.restoreEvent);

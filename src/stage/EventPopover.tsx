@@ -9,6 +9,7 @@ import {
   editWholeTemplate,
   endSeries,
   skipOccurrence,
+  type RecurringOpResult,
 } from '../state/recurringOps';
 import type { CalendarEvent, CategoryId } from '../state/types';
 import { useToast } from '../ui';
@@ -57,11 +58,18 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
     onClose();
   }
 
-  function applyRecurringEdit(scope: RecurrenceScope) {
+  async function applyRecurringEdit(scope: RecurrenceScope) {
     const patch = { title: title.trim() || event.title, categoryId };
-    const result =
-      scope === 'template' ? editWholeTemplate(event, patch) : editOccurrenceOnly(event, patch);
     onClose();
+    let result: RecurringOpResult | null;
+    try {
+      result =
+        scope === 'template'
+          ? await editWholeTemplate(event, patch)
+          : await editOccurrenceOnly(event, patch);
+    } catch {
+      return; // Google rejected it — the store already rolled back and spoke up
+    }
     if (!result) return;
     const scopeText = scope === 'template' ? `every ${dayName}` : `just this ${dayName}`;
     const entry = appendLedger('edit', `Edited “${patch.title}” — ${scopeText}.`, result.undo);
@@ -75,9 +83,14 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
     });
   }
 
-  function applyRecurringDelete(scope: RecurrenceScope) {
-    const result = scope === 'template' ? endSeries(event) : skipOccurrence(event);
+  async function applyRecurringDelete(scope: RecurrenceScope) {
     onClose();
+    let result: RecurringOpResult | null;
+    try {
+      result = scope === 'template' ? await endSeries(event) : await skipOccurrence(event);
+    } catch {
+      return; // Google rejected it — the store already rolled back and spoke up
+    }
     if (!result) return;
     const entry =
       scope === 'template'
@@ -188,7 +201,7 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
             title="Save changes to this repeating event?"
             dayName={dayName}
             everyNote="Every week takes the new name"
-            onChoose={applyRecurringEdit}
+            onChoose={(scope) => void applyRecurringEdit(scope)}
             onCancel={() => setMode('edit')}
           />
         )}
@@ -198,7 +211,7 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
             dayName={dayName}
             thisNote="Only this date is skipped"
             everyNote="The series ends; past weeks remain"
-            onChoose={applyRecurringDelete}
+            onChoose={(scope) => void applyRecurringDelete(scope)}
             onCancel={() => setMode('view')}
           />
         )}
@@ -220,7 +233,7 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
                 <span>Repeats weekly on {dayName}s</span>
                 <button
                   className="pop-repeat-stop"
-                  onClick={() => applyRecurringDelete('template')}
+                  onClick={() => void applyRecurringDelete('template')}
                 >
                   Stop repeating
                 </button>
