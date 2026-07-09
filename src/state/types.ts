@@ -18,10 +18,13 @@ export interface CalendarEvent {
   categoryId: CategoryId;
   source: EventSource;
   allDay?: boolean;
-  /** Set on expanded occurrences of a weekly RecurringTemplate (local only). */
+  /** Set on expanded occurrences of a weekly RecurringTemplate and on Google
+   *  recurring-event instances alike — the grid and popover treat both the same. */
   recurring?: boolean;
-  /** The RecurringTemplate an occurrence was expanded from. */
+  /** The RecurringTemplate an occurrence was expanded from (local recurrence). */
   templateId?: string;
+  /** The parent Google recurring event ('g:'-prefixed), for instances of a series. */
+  googleSeriesId?: string;
 }
 
 export interface EventInput {

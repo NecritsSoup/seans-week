@@ -42,6 +42,10 @@ export interface GoogleEvent {
   eventType?: string;
   start?: GoogleEventTime;
   end?: GoogleEventTime;
+  /** RFC 5545 lines (RRULE/RDATE/EXDATE) — present on recurring parents. */
+  recurrence?: string[];
+  /** The parent recurring event's id — present on expanded instances. */
+  recurringEventId?: string;
 }
 
 export interface GoogleEventList {

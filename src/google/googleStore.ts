@@ -45,7 +45,7 @@ function newTempId(): string {
   return `${TEMP_ID_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function localTimeZone(): string {
+export function localTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
   } catch {
@@ -67,6 +67,11 @@ function toCalendarEvent(item: GoogleEvent): CalendarEvent | null {
     end: item.end.dateTime,
     categoryId: categoryFor(title) ?? 'work',
     source: 'google',
+    // Instances of a Google recurring event behave like local occurrences:
+    // the ↻ glyph, the "Repeats weekly" row, the scope choosers.
+    ...(item.recurringEventId
+      ? { recurring: true, googleSeriesId: `${GOOGLE_ID_PREFIX}${item.recurringEventId}` }
+      : {}),
   };
 }
 
@@ -92,6 +97,12 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
   private listFailureLogged = false;
   /** Recently deleted here or on Google — never resurrected by a stale poll. */
   private tombstones = new Map<string, number>();
+  /**
+   * Freshly created series, shown as a first-occurrence stand-in under the
+   * parent's id until the sync engine delivers the real expanded instances
+   * (singleEvents=true never lists the parent itself).
+   */
+  private seriesPlaceholders = new Set<string>();
   /** In-flight guards: double-submits collapse into the same API call. */
   private pendingCreates = new Map<string, Promise<CalendarEvent>>();
   private pendingRemoves = new Map<string, Promise<void>>();
@@ -105,6 +116,7 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
         this.synced.clear();
         this.syncedWindow = null;
         this.tombstones.clear();
+        this.seriesPlaceholders.clear();
       }
       this.rangeCache.clear();
       this.listFailureLogged = false;
@@ -188,10 +200,12 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
       const ev = toCalendarEvent(item);
       if (ev && !this.tombstones.has(ev.id)) next.set(ev.id, ev);
     }
-    // Optimistic creations still awaiting their real id survive the swap.
+    // Optimistic creations still awaiting their real id survive the swap;
+    // series stand-ins do not — the real instances are in this list.
     this.synced.forEach((ev, id) => {
       if (isTempId(id)) next.set(id, ev);
     });
+    this.seriesPlaceholders.clear();
     this.synced = next;
     this.syncedWindow = { startMs: windowStartMs, endMs: windowEndMs };
     this.rangeCache.clear();
@@ -205,6 +219,13 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
     for (const item of items) {
       if (!item.id) continue;
       const id = `${GOOGLE_ID_PREFIX}${item.id}`;
+      // The real instances have arrived — the stand-in yields to them.
+      if (item.recurringEventId) {
+        const placeholderId = `${GOOGLE_ID_PREFIX}${item.recurringEventId}`;
+        if (this.seriesPlaceholders.delete(placeholderId)) {
+          if (this.synced.delete(placeholderId)) changed = true;
+        }
+      }
       if (item.status === 'cancelled') {
         // Deleted on Google: it goes, even mid-edit — never resurrected.
         if (this.synced.delete(id)) changed = true;
@@ -426,6 +447,174 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
     return promise;
   }
 
+  /* ------------------------------------------------------------- series ---- */
+
+  /**
+   * Create a real Google recurring event: the RRULE lives on the parent,
+   * start/end are the first occurrence (timeZone required — it anchors the
+   * expansion). Optimistically a temp first occurrence shows at once; on
+   * success it becomes a stand-in under the parent's id until the nudged
+   * sync delivers the expanded instances, which replace it.
+   */
+  async createSeries(input: {
+    title: string;
+    categoryId: CalendarEvent['categoryId'];
+    start: string;
+    end: string;
+    recurrence: string[];
+  }): Promise<CalendarEvent> {
+    const tempId = newTempId();
+    const optimistic: CalendarEvent = {
+      id: tempId,
+      title: input.title,
+      start: input.start,
+      end: input.end,
+      categoryId: input.categoryId,
+      source: 'google',
+      recurring: true,
+    };
+    this.synced.set(tempId, optimistic);
+    this.notify();
+    try {
+      const created = (await gFetch(EVENTS_API, {
+        method: 'POST',
+        body: JSON.stringify({ ...eventBody(input), recurrence: input.recurrence }),
+      })) as GoogleEvent;
+      const mapped = toCalendarEvent(created);
+      const id = mapped?.id ?? `${GOOGLE_ID_PREFIX}${created.id ?? ''}`;
+      const result: CalendarEvent = {
+        ...(mapped ?? optimistic),
+        id,
+        categoryId: input.categoryId,
+        recurring: true,
+        googleSeriesId: id,
+      };
+      this.synced.delete(tempId);
+      this.synced.set(result.id, result);
+      this.seriesPlaceholders.add(result.id);
+      this.rangeCache.clear();
+      this.notify();
+      this.engine.nudge();
+      return result;
+    } catch (err) {
+      this.synced.delete(tempId);
+      this.rangeCache.clear();
+      this.notify();
+      appendLedger(
+        'error',
+        `Google Calendar would not start “${input.title}” repeating — nothing was written.`
+      );
+      requestToast({
+        message: `“${input.title}” did not reach Google Calendar.`,
+        actionLabel: 'Retry',
+        onAction: () => void this.createSeries(input).catch(() => {}),
+      });
+      throw err;
+    }
+  }
+
+  /** The parent recurring event, raw — recurrence, start and end included. */
+  async getSeries(seriesId: string): Promise<GoogleEvent> {
+    return (await gFetch(`${EVENTS_API}/${encodeURIComponent(rawId(seriesId))}`)) as GoogleEvent;
+  }
+
+  /**
+   * PATCH the parent of a series ("every week" edits). `optimistic` maps each
+   * cached instance of the series to its expected shape (null removes it);
+   * the nudged sync then reconciles with Google's real expansion. Failure
+   * rolls the instances back, with the usual Ledger entry and Retry toast.
+   */
+  async patchSeries(
+    seriesId: string,
+    body: Record<string, unknown>,
+    optimistic?: (ev: CalendarEvent) => CalendarEvent | null
+  ): Promise<void> {
+    const snapshot = this.snapshotSeries(seriesId);
+    if (optimistic && snapshot.length > 0) {
+      for (const ev of snapshot) {
+        const next = optimistic(ev);
+        if (next) this.synced.set(ev.id, { ...next, id: ev.id });
+        else this.synced.delete(ev.id);
+      }
+      this.rangeCache.clear();
+      this.notify();
+    }
+    try {
+      await gFetch(`${EVENTS_API}/${encodeURIComponent(rawId(seriesId))}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      // A revived (or reshaped) series must not fight its own tombstones:
+      // the nudged sync brings the instances back as Google reissues them.
+      this.clearSeriesTombstones(seriesId);
+      this.engine.nudge();
+    } catch (err) {
+      this.restoreSeries(seriesId, snapshot);
+      appendLedger('error', 'Google Calendar would not accept that change — the series stands as before.');
+      requestToast({
+        message: 'Google Calendar did not accept that change.',
+        actionLabel: 'Retry',
+        onAction: () => void this.patchSeries(seriesId, body, optimistic).catch(() => {}),
+      });
+      throw err;
+    }
+  }
+
+  /** DELETE the parent — the whole series, past weeks included. */
+  async removeSeries(seriesId: string, title: string): Promise<void> {
+    const snapshot = this.snapshotSeries(seriesId);
+    for (const ev of snapshot) {
+      this.synced.delete(ev.id);
+      this.tombstones.set(ev.id, Date.now());
+    }
+    this.seriesPlaceholders.delete(seriesId);
+    this.rangeCache.clear();
+    this.notify();
+    try {
+      await gFetch(`${EVENTS_API}/${encodeURIComponent(rawId(seriesId))}`, { method: 'DELETE' });
+      this.engine.nudge();
+    } catch (err) {
+      if (err instanceof GApiError && (err.status === 404 || err.status === 410)) {
+        return; // already gone on Google — which is what we wanted
+      }
+      for (const ev of snapshot) this.tombstones.delete(ev.id);
+      this.restoreSeries(seriesId, snapshot);
+      appendLedger(
+        'error',
+        `Google Calendar would not delete the “${title}” series — it is still there.`
+      );
+      requestToast({
+        message: 'Google Calendar would not delete that series.',
+        actionLabel: 'Retry',
+        onAction: () => void this.removeSeries(seriesId, title).catch(() => {}),
+      });
+      throw err;
+    }
+  }
+
+  /** Every cached event belonging to a series — instances and the stand-in. */
+  private snapshotSeries(seriesId: string): CalendarEvent[] {
+    const out: CalendarEvent[] = [];
+    this.synced.forEach((ev) => {
+      if (ev.googleSeriesId === seriesId || ev.id === seriesId) out.push(ev);
+    });
+    return out;
+  }
+
+  /** Drop tombstones for a series' parent and instances ('<parent>_…' ids). */
+  private clearSeriesTombstones(seriesId: string): void {
+    this.tombstones.forEach((_, id) => {
+      if (id === seriesId || id.startsWith(`${seriesId}_`)) this.tombstones.delete(id);
+    });
+  }
+
+  private restoreSeries(seriesId: string, snapshot: CalendarEvent[]): void {
+    for (const ev of snapshot) this.synced.set(ev.id, ev);
+    if (snapshot.some((ev) => ev.id === seriesId)) this.seriesPlaceholders.add(seriesId);
+    this.rangeCache.clear();
+    this.notify();
+  }
+
   /* ------------------------------------------------------------- wiring ---- */
 
   subscribe(listener: () => void): () => void {
@@ -436,4 +625,17 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
   private notify(): void {
     this.listeners.forEach((fn) => fn());
   }
+}
+
+/* ---------------------------------------------------------- shared store ---- */
+
+let sharedStore: GoogleCalendarStore | null = null;
+
+/**
+ * The one GoogleCalendarStore. EventsProvider mounts it; the recurrence ops
+ * modules (which live outside React) reach the same instance through here.
+ */
+export function getGoogleCalendarStore(): GoogleCalendarStore {
+  if (!sharedStore) sharedStore = new GoogleCalendarStore();
+  return sharedStore;
 }
