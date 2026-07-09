@@ -27,7 +27,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   // Local truth always; Google truth merged in when signed in.
   const stores = useMemo(() => {
     const local = new LocalEventStore();
-    return { local, composite: new CompositeEventStore(local, new GoogleCalendarStore()) };
+    const google = new GoogleCalendarStore();
+    return { local, google, composite: new CompositeEventStore(local, google) };
   }, []);
   const store = stores.composite;
   const [version, setVersion] = useState(0);
@@ -43,6 +44,13 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       unsubscribe();
     };
   }, [store, stores.local]);
+
+  // Background Google sync: polls while visible and signed in, refreshes on
+  // focus and after writes. Detaches cleanly with the provider.
+  useEffect(() => {
+    stores.google.startSync();
+    return () => stores.google.stopSync();
+  }, [stores.google]);
 
   const resetDemo = useCallback(() => resetDemoData(stores.local), [stores.local]);
 

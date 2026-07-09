@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { signIn, signOut, useGoogleAuth } from '../google/auth';
+import { useSyncStatus } from '../google/syncEngine';
 import { appendLedger } from '../hermes/ledgerStore';
+import { relTime } from '../lib/time';
 import { useResetDemoData } from '../state/EventsContext';
 import { setTheme, THEMES, useTheme, type ThemeName } from '../theme/theme';
 import { Panel, useToast } from '../ui';
@@ -20,13 +22,22 @@ const THEME_LABELS: Record<ThemeName, string> = {
 /** Settings: the Google account, the theme, the demo data, the Ledger. */
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const auth = useGoogleAuth();
+  const sync = useSyncStatus();
   const theme = useTheme();
   const resetDemo = useResetDemoData();
   const { showToast } = useToast();
   const [confirmingReset, setConfirmingReset] = useState(false);
+  // Keeps "last synced …" honest while the panel sits open.
+  const [, setSyncTick] = useState(0);
 
   useEffect(() => {
     if (!open) setConfirmingReset(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = setInterval(() => setSyncTick((t) => t + 1), 30_000);
+    return () => clearInterval(timer);
   }, [open]);
 
   async function doReset() {
@@ -41,7 +52,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       ? (auth.email ?? 'Signed in')
       : auth.status === 'connecting'
         ? 'Connecting…'
-        : 'Not signed in';
+        : auth.status === 'expired'
+          ? 'Session expired'
+          : 'Not signed in';
 
   return (
     <Panel open={open} onClose={onClose} title="Settings" width={340}>
@@ -59,10 +72,13 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               onClick={() => void signIn()}
               disabled={auth.status === 'connecting'}
             >
-              Sign in with Google
+              {auth.status === 'expired' ? 'Reconnect' : 'Sign in with Google'}
             </button>
           )}
         </div>
+        {auth.status === 'signed-in' && sync.lastSyncedAt !== null && (
+          <p className="settings-note">Last synced {relTime(sync.lastSyncedAt)}.</p>
+        )}
         <p className="settings-note">
           Signed in, events flow to and from Google Calendar and Hermes carries scrolls from
           Gmail. Signed out, everything stays on this device.
