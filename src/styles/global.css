@@ -1386,6 +1386,11 @@ h1, h2, h3 {
   opacity: 1;
 }
 
+.status-chip.expired .status-dot {
+  background: var(--cat-work);
+  opacity: 1;
+}
+
 .nav-btn.gear { font-size: 15px; }
 
 /* Topbar Dispatches entry: sealed-scroll button + authoritative count. */
