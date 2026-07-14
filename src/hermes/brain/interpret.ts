@@ -85,20 +85,37 @@ export function looksLikeCommand(text: string): boolean {
 const CREATE_VERB_RE = /^(add|new|schedule|book|create|plan|put)\b/;
 /** Sweeping words the rules cannot do; they mint garbage fallback-creates. */
 const SWEEP_RE = /\b(clear|free|empty|wipe|everything|swap|rearrange|reshuffle)\b/;
+/** Action verbs buried mid-sentence — a leading one would have parsed as a
+ * real move/cancel, so seeing one inside a fallback-create means the rules
+ * misread a conversational command as a title. */
+const ACTION_ANYWHERE_RE =
+  /\b(move|reschedule|shift|bump|slide|cancel|delete|remove|drop|skip|change|switch|swap|make)\b/;
+/** Pronouns and quantifiers that refer to events rather than name one. */
+const REFERENCE_RE = /\b(them|they|these|those|each of|all of|all my|everything)\b/;
+/** Question or polite phrasing — nobody titles an event "can you…?". */
+const CONVERSATIONAL_RE = /\b(can you|could you|would you|please|help me)\b|\?/;
 
 /**
  * Should an input that parsed to `intentKind` be offered to the brain
  * instead? 'search' means the rules found nothing actionable — a verb-ish or
  * time-ish input qualifies. A 'create' qualifies only when it came from the
- * verbless date/time fallback AND carries a sweeping verb the rules cannot
- * express ("clear my thursday afternoon and move everything to friday") —
- * deliberate creates ("add gym friday 8am", "reading sunday 2-4pm") never do.
+ * verbless date/time fallback AND reads like a command the rules misheard:
+ * a sweeping verb ("clear my thursday afternoon"), a mid-sentence action verb
+ * with an event reference ("all of my gym days… can you move them to 5:30"),
+ * or question phrasing. Deliberate creates ("add gym friday 8am",
+ * "dinner with mom friday 7pm") never do.
  */
 export function brainEligible(intentKind: 'search' | 'create', text: string): boolean {
   const lower = text.toLowerCase().trim();
   if (!lower) return false;
   if (intentKind === 'search') return looksLikeCommand(lower);
-  return !CREATE_VERB_RE.test(lower) && SWEEP_RE.test(lower);
+  if (CREATE_VERB_RE.test(lower)) return false;
+  return (
+    SWEEP_RE.test(lower) ||
+    CONVERSATIONAL_RE.test(lower) ||
+    REFERENCE_RE.test(lower) ||
+    ACTION_ANYWHERE_RE.test(lower)
+  );
 }
 
 /* ----------------------------------------------------------- tool schema ---- */
