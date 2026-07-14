@@ -12,6 +12,8 @@ import {
   type BriefKind,
 } from './briefs';
 import { Card } from './Card';
+import { BATCH_STAGE_EVENT } from './batch';
+import type { SingleIntent } from './intents/types';
 import { appendLedger } from './ledgerStore';
 import { Palette, type PaletteSeed } from './Palette';
 import { Ledger } from './Ledger';
@@ -38,6 +40,7 @@ interface ActiveBrief {
 export function HermesLayer({ onNavigate }: HermesLayerProps) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteSeed, setPaletteSeed] = useState<PaletteSeed | null>(null);
+  const [batchSeed, setBatchSeed] = useState<SingleIntent[] | null>(null);
   const [cardOpen, setCardOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [brief, setBrief] = useState<ActiveBrief | null>(null);
@@ -57,6 +60,7 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
   const openPalette = useCallback(() => {
     setCardOpen(false);
     setPaletteSeed(null); // a keyboard summon starts from a clean slate
+    setBatchSeed(null);
     setPaletteOpen((open) => !open);
   }, []);
 
@@ -76,7 +80,16 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
       const detail = (e as CustomEvent<PaletteSeed>).detail;
       if (!detail) return;
       setCardOpen(false);
+      setBatchSeed(null);
       setPaletteSeed(detail);
+      setPaletteOpen(true);
+    }
+    function onBatchStage(e: Event) {
+      const ops = (e as CustomEvent<SingleIntent[]>).detail;
+      if (!ops || ops.length === 0) return;
+      setCardOpen(false);
+      setPaletteSeed(null);
+      setBatchSeed(ops);
       setPaletteOpen(true);
     }
     function onLedgerSummon() {
@@ -85,10 +98,12 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
     }
     window.addEventListener('hermes:summon', onSummon);
     window.addEventListener('hermes:palette', onPaletteSeed);
+    window.addEventListener(BATCH_STAGE_EVENT, onBatchStage);
     window.addEventListener('hermes:ledger', onLedgerSummon);
     return () => {
       window.removeEventListener('hermes:summon', onSummon);
       window.removeEventListener('hermes:palette', onPaletteSeed);
+      window.removeEventListener(BATCH_STAGE_EVENT, onBatchStage);
       window.removeEventListener('hermes:ledger', onLedgerSummon);
     };
   }, []);
@@ -127,9 +142,11 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
         onClose={() => {
           setPaletteOpen(false);
           setPaletteSeed(null);
+          setBatchSeed(null);
         }}
         onNavigate={onNavigate}
         seed={paletteSeed}
+        batchSeed={batchSeed}
       />
       <Card
         open={cardOpen}
@@ -137,6 +154,7 @@ export function HermesLayer({ onNavigate }: HermesLayerProps) {
         onOpenPalette={() => {
           setCardOpen(false);
           setPaletteSeed(null);
+          setBatchSeed(null);
           setPaletteOpen(true);
         }}
         onOpenLedger={() => {

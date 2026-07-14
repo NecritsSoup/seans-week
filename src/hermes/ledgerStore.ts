@@ -13,6 +13,8 @@ export type LedgerType =
   | 'create'
   | 'move'
   | 'cancel'
+  /** Several operations confirmed as one reviewable batch. */
+  | 'batch'
   /** Title/category changes (recurring scope edits). */
   | 'edit'
   | 'todo'
@@ -77,7 +79,9 @@ export type LedgerUndo =
       title: string;
       restoreEvent?: RestorableEvent;
       restoreTemplate?: RecurringTemplate;
-    };
+    }
+  /** A confirmed batch: run every child undo, last change first. */
+  | { kind: 'batch'; children: LedgerUndo[] };
 
 export interface LedgerEntry {
   id: string;
