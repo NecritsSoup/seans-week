@@ -11,7 +11,7 @@ import {
 import { isSignedIn } from '../google/auth';
 import { categoryById } from '../state/categories';
 import { useEventActions, useEvents } from '../state/EventsContext';
-import { weekdayName, type RecurrenceScope } from '../state/recurrence';
+import { getTemplates, weekdayName, type RecurrenceScope } from '../state/recurrence';
 import {
   createWeeklyRhythm,
   endSeries,
@@ -29,7 +29,10 @@ import {
   listNames,
   narrateBatch,
   performBatchOp,
+  stageBatch,
 } from './batch';
+import { BrainError, brainEligible, interpret } from './brain/interpret';
+import { hasApiKey, useHasApiKey } from './brain/keyStore';
 import { findAllEventsByQuery, findEventsByQuery } from './intents/findEvent';
 import {
   batchMeridian,
@@ -112,7 +115,12 @@ type PaletteMode =
     }
   | { kind: 'confirm'; action: PendingAction; summary: string }
   | { kind: 'batch'; batch: BatchState }
-  | { kind: 'message'; text: string };
+  /** Hermes's mind is consulting the API — palette stays open, abortable. */
+  | { kind: 'ponder' }
+  | { kind: 'message'; text: string; showSearch?: boolean };
+
+/** Once per page session: the "add a key" hint after a failed parse. */
+let brainHintSeen = false;
 
 const SUGGESTIONS = [
   'add gym friday 8am',
@@ -216,6 +224,10 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const seedCommitRef = useRef<(() => void) | null>(null);
+  const hasKey = useHasApiKey();
+  /** In-flight brain call — aborted on Escape, close, or a new question. */
+  const brainAbortRef = useRef<AbortController | null>(null);
+  const hintShownRef = useRef(false);
 
   const [rangeStart] = useState(() => addDays(startOfDay(new Date()), -14));
   const [rangeEnd] = useState(() => addDays(startOfDay(new Date()), 90));
@@ -234,6 +246,10 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     if (open) {
       inputRef.current?.focus();
     } else {
+      brainAbortRef.current?.abort();
+      brainAbortRef.current = null;
+      if (hintShownRef.current) brainHintSeen = true;
+      hintShownRef.current = false;
       setText('');
       setMode({ kind: 'input' });
       setHighlight(0);
@@ -274,12 +290,16 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
   if (!open) return null;
 
   function backToInput() {
+    brainAbortRef.current?.abort();
+    brainAbortRef.current = null;
     clearPendingAction();
     seedCommitRef.current = null;
     setMode({ kind: 'input' });
   }
 
   function close() {
+    brainAbortRef.current?.abort();
+    brainAbortRef.current = null;
     clearPendingAction();
     onClose();
   }
@@ -354,6 +374,54 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     } else {
       setHighlight(0);
       setMode({ kind: 'choose', intent, candidates });
+    }
+  }
+
+  /* --------------------------------------------------------------- brain ---- */
+
+  /** The palette hint's road to the key field. */
+  function openSettingsFromPalette() {
+    close();
+    window.dispatchEvent(new CustomEvent('hermes:settings'));
+  }
+
+  /**
+   * The LLM fallback: interpret an unparseable command into SingleIntent ops
+   * and stage them into the SAME batch review every parsed command uses —
+   * the model proposes, the owner confirms. Only ever called explicitly
+   * (Enter or the Ask Hermes row); deterministic parses never reach it.
+   */
+  async function askHermes() {
+    const raw = text.trim();
+    if (!raw || !hasApiKey()) return;
+    brainAbortRef.current?.abort();
+    const controller = new AbortController();
+    brainAbortRef.current = controller;
+    setMode({ kind: 'ponder' });
+    try {
+      const ops = await interpret(
+        raw,
+        { now: new Date(), templates: getTemplates(), events },
+        controller.signal
+      );
+      if (controller.signal.aborted) return;
+      appendLedger(
+        'brain',
+        `Hermes interpreted: “${raw}” → ${ops.length} change${ops.length === 1 ? '' : 's'}.`
+      );
+      stageBatch(ops); // → hermes:batch → the palette's own batch review
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      setMode({
+        kind: 'message',
+        text:
+          err instanceof BrainError
+            ? err.message
+            : 'Something slipped from my hands mid-thought. Ask me again in a moment.',
+        showSearch: searchResults.length > 0,
+      });
+    } finally {
+      if (brainAbortRef.current === controller) brainAbortRef.current = null;
     }
   }
 
@@ -839,6 +907,13 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
         break;
       }
       case 'search': {
+        // The rules found nothing actionable. If the input reads like a
+        // command (not a plain-noun search) and a key exists, consult the
+        // brain — unless the owner arrow-picked a search result below.
+        if (hasKey && highlight === 0 && brainEligible('search', text)) {
+          void askHermes();
+          break;
+        }
         const target = searchResults[highlight] ?? searchResults[0];
         if (target) {
           onNavigate(startOfDay(new Date(target.start)), null);
@@ -847,6 +922,12 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
         break;
       }
       case 'create': {
+        // The verbless fallback can mint a garbage create out of a sweeping
+        // command — those belong to the brain when a key exists.
+        if (hasKey && brainEligible('create', text)) {
+          void askHermes();
+          break;
+        }
         const action: PendingAction = {
           kind: 'create',
           title: intent.title,
@@ -896,6 +977,7 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     }
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    if (mode.kind === 'ponder') return; // patience — esc aborts
     if (mode.kind === 'confirm') void execute(mode.action);
     else if (mode.kind === 'batch') {
       if (mode.batch.rows.every((row) => row.action !== null)) void executeBatch(mode.batch);
@@ -939,6 +1021,8 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     }
     switch (intent.kind) {
       case 'create':
+        // A sweep command headed for the brain: the Ask Hermes row speaks instead.
+        if (hasKey && brainEligible('create', text)) return null;
         return intent.repeatWeekly
           ? `Create “${intent.title}” — every ${weekdayName(intent.day.getDay())}, ${fmtRange(intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`
           : `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`;
@@ -956,6 +1040,20 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
         return null;
     }
   })();
+
+  // The brain's territory: the rules produced only a search, or a garbage
+  // fallback-create out of a sweeping command.
+  const parseFailed =
+    mode.kind === 'input' && intent?.kind === 'search' && text.trim().length >= 2;
+  const commandish =
+    mode.kind === 'input' &&
+    text.trim().length >= 2 &&
+    (intent?.kind === 'search' || intent?.kind === 'create') &&
+    brainEligible(intent.kind, text);
+  const showAskRow = parseFailed || commandish;
+  const showBrainHint = commandish && !hasKey && !brainHintSeen;
+  // Remember the hint was actually seen; the close effect makes it once-per-session.
+  if (showBrainHint) hintShownRef.current = true;
 
   /** Recurring cancel/move confirms ask scope: "this friday" / "every friday". */
   const confirmScopes =
@@ -1036,6 +1134,45 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
                 )}
               </>
             )}
+            {showAskRow && (
+              <>
+                <button
+                  className="palette-row action"
+                  onClick={() => {
+                    if (hasKey) void askHermes();
+                    else openSettingsFromPalette();
+                  }}
+                >
+                  <span className="palette-row-title">
+                    Ask Hermes ✨{hasKey ? '' : ' — he needs an Anthropic key'}
+                  </span>
+                  {hasKey && commandish && <kbd>⏎</kbd>}
+                </button>
+                {showBrainHint && (
+                  <button className="palette-row brain-hint" onClick={openSettingsFromPalette}>
+                    <span className="palette-row-title">
+                      Hermes can interpret trickier requests with an Anthropic key — Settings
+                    </span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {mode.kind === 'ponder' && (
+          <div className="palette-body">
+            <div className="palette-voice palette-ponder">
+              Hermes ponders
+              <span className="ponder-dots" aria-hidden="true">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </span>
+            </div>
+            <div className="palette-note">
+              Interpreting with Anthropic — <kbd>esc</kbd> to let it go.
+            </div>
           </div>
         )}
 
@@ -1221,6 +1358,21 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
         {mode.kind === 'message' && (
           <div className="palette-body">
             <div className="palette-voice">{mode.text}</div>
+            {mode.showSearch &&
+              searchResults.map((ev) => (
+                <button
+                  key={ev.id}
+                  className={`palette-row ${categoryById(ev.categoryId).colorToken}`}
+                  onClick={() => {
+                    onNavigate(startOfDay(new Date(ev.start)), null);
+                    close();
+                  }}
+                >
+                  <span className="cat-dot" />
+                  <span className="palette-row-title">{ev.title}</span>
+                  <span className="palette-row-when tnum">{fmtEventWhen(ev)}</span>
+                </button>
+              ))}
             <div className="palette-confirm-actions">
               <button className="btn" onClick={backToInput}>
                 Back <kbd>esc</kbd>

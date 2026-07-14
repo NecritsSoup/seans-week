@@ -25,7 +25,9 @@ export type LedgerType =
   /** Email scrolls turned into to-dos or events. */
   | 'scroll'
   /** Hermes's own suggestions, accepted from the Dispatches hub. */
-  | 'suggest';
+  | 'suggest'
+  /** The LLM fallback interpreted a command into a staged (not executed) batch. */
+  | 'brain';
 
 /** The fields needed to recreate a deleted one-off event. */
 export interface RestorableEvent {

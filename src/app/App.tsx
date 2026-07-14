@@ -59,13 +59,21 @@ export function App() {
     onTasks: openTasks,
   });
 
-  // The Hermes Card and palette summon the hub by event ('hermes:dispatches').
+  // The Hermes Card and palette summon the hub by event ('hermes:dispatches');
+  // the palette's key hint opens Settings the same way ('hermes:settings').
   useEffect(() => {
     function onDispatches() {
       setSurface('dispatches');
     }
+    function onSettings() {
+      setSurface('settings');
+    }
     window.addEventListener('hermes:dispatches', onDispatches);
-    return () => window.removeEventListener('hermes:dispatches', onDispatches);
+    window.addEventListener('hermes:settings', onSettings);
+    return () => {
+      window.removeEventListener('hermes:dispatches', onDispatches);
+      window.removeEventListener('hermes:settings', onSettings);
+    };
   }, []);
 
   /** Hermes moves the stage: to a day, a view, or both. */
