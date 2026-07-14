@@ -7,14 +7,17 @@ import {
   startOfDay,
 } from '../../lib/time';
 import { categoryById } from '../../state/categories';
-import type { CategoryId } from '../../state/types';
+import type { CalendarEvent, CategoryId } from '../../state/types';
+import { findEventsByQuery } from './findEvent';
 import type {
+  BatchIntent,
   CancelIntent,
   CreateIntent,
   MoveIntent,
   NavigateIntent,
   ParsedIntent,
   RecurIntent,
+  SingleIntent,
   TimeMatch,
 } from './types';
 
@@ -313,6 +316,54 @@ export function resolveMoveTimes(
   return { startMin, endMin };
 }
 
+/* --------------------------------------------------------------- batches ---- */
+
+/**
+ * Meridian for a shared bare time in a batch ("all be at 5:30"): am/pm
+ * words win; else an evening target keeps the evening; else a bare 1–6
+ * means afternoon — nobody batch-moves their week to 5:30am by accident.
+ * The review UI shows the result and lets the owner flip it.
+ */
+export function batchMeridian(
+  time: TimeMatch,
+  raw: string,
+  origStartMins: number[]
+): 'am' | 'pm' {
+  if (saysAm(raw)) return 'am';
+  if (saysPm(raw)) return 'pm';
+  if (origStartMins.some((min) => Math.floor(min / 60) >= 17)) return 'pm';
+  const h = Math.floor(time.startMin / 60);
+  return h >= 1 && h <= 6 ? 'pm' : 'am';
+}
+
+/**
+ * resolveMoveTimes with the meridian already decided — every row of a batch
+ * resolves a shared bare time to the SAME side of the clock.
+ */
+export function resolveBatchMoveTimes(
+  time: TimeMatch | null,
+  origStartMin: number,
+  origEndMin: number,
+  meridian: 'am' | 'pm'
+): { startMin: number; endMin: number } {
+  const origDur = Math.max(origEndMin - origStartMin, 15);
+  if (!time) return { startMin: origStartMin, endMin: origStartMin + origDur };
+  const infer = (min: number, explicit: boolean): number =>
+    explicit ? min : meridian === 'pm' ? toPm(min) : min;
+  let startMin = clampToDayBounds(infer(time.startMin, time.startExplicit));
+  let endMin: number;
+  if (time.endMin !== null) {
+    endMin = infer(time.endMin, time.endExplicit);
+    if (endMin <= startMin) endMin = Math.min(endMin + 12 * 60, 24 * 60);
+    if (endMin <= startMin) endMin = startMin + origDur;
+  } else {
+    endMin = startMin + origDur;
+  }
+  endMin = Math.min(Math.max(endMin, startMin + 15), DAY_END_MIN);
+  if (startMin >= endMin) startMin = Math.max(endMin - origDur, DAY_START_MIN);
+  return { startMin, endMin };
+}
+
 /* ----------------------------------------------------------- recurrence ---- */
 
 const WEEKLY_DAY_RE = new RegExp(`\\b(?:every|each)\\s+(${WEEKDAY_ALT})s?\\b`);
@@ -338,6 +389,179 @@ const CANCEL_VERB = /^(cancel|delete|remove|drop|scratch|skip)\b/;
 const SEARCH_PREFIX = /^(find|search(?:\s+for)?|look\s+for|where(?:'s|\s+is))\s+/;
 const RECUR_RE =
   /^make\s+(.+?)\s+(?:weekly|recurring|repeat(?:ing)?(?:\s+(?:weekly|every\s+week))?)[.!?]*$/;
+
+/* --------------------------------------------------------- batch parsing ---- */
+
+const MAKE_VERB = /^make\b/;
+/** "all gym events" / "every gym" / "each reading" — expand to all matches. */
+const QUANTIFIER_RE = /^(?:all|every|each)\b\s*(?:of\s+)?(?:my\s+|the\s+)?/;
+/** Trailing connective words left behind once the shared time is stripped. */
+const TRAILING_MARKER_RE = /\s*\b(all|both|each|be|at|to)\b\s*$/;
+/** "this week" / "next week" are range hints, not dates — drop them. */
+const WEEK_NOISE_RE = /\b(?:this|next)\s+week\b/g;
+
+/**
+ * Split an enumeration on commas / "and" / "&" / "+", then split runs that
+ * repeat their terminal word ("gym pull day leg day" → "gym pull day" +
+ * "leg day" — spoken lists often drop the comma).
+ */
+function splitEnumeration(text: string): string[] {
+  const coarse = text.split(/\s*(?:,|&|\+|\band\b)\s*/);
+  const parts: string[] = [];
+  for (const frag of coarse) {
+    const words = frag.split(/\s+/).filter(Boolean);
+    if (words.length === 0) continue;
+    const last = words[words.length - 1];
+    const repeats = words.filter((w) => w === last).length;
+    if (repeats >= 2 && words.length > repeats) {
+      let unit: string[] = [];
+      for (const w of words) {
+        unit.push(w);
+        if (w === last) {
+          parts.push(unit.join(' '));
+          unit = [];
+        }
+      }
+      if (unit.length > 0) parts.push(unit.join(' '));
+    } else {
+      parts.push(frag);
+    }
+  }
+  return parts.map((p) => cleanQuery(p)).filter(Boolean);
+}
+
+/**
+ * Enumeration + shared-predicate fan-out: "move X, Y and Z to 5:30",
+ * "cancel A and B tomorrow", "make pull day, legs day and push day all be
+ * at 5:30", "move all gym events to 6pm". Returns null — falling through
+ * to the single-intent parsers — unless a move/cancel verb context exists
+ * AND every enumerated fragment plausibly names something on the calendar
+ * (checked with the same findEvent scoring the palette resolves with), so
+ * create titles like "dinner with Sam and Alex" never split.
+ */
+function parseBatch(
+  lower: string,
+  raw: string,
+  now: Date,
+  events: CalendarEvent[]
+): BatchIntent | null {
+  if (events.length === 0) return null;
+  const start = lower.replace(/[.!?]+$/, '').trim();
+
+  let kind: 'move' | 'cancel';
+  let body: string;
+  /** "make …" is soft — it must earn move-ness with a time + marker/matches. */
+  let isMake = false;
+  if (MOVE_VERB.test(start)) {
+    kind = 'move';
+    body = start.replace(MOVE_VERB, '').trim();
+  } else if (CANCEL_VERB.test(start)) {
+    kind = 'cancel';
+    body = start.replace(CANCEL_VERB, '').trim();
+  } else if (MAKE_VERB.test(start)) {
+    kind = 'move';
+    body = start.replace(MAKE_VERB, '').trim();
+    isMake = true;
+  } else {
+    return null;
+  }
+  body = body.replace(WEEK_NOISE_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+  if (!body) return null;
+
+  let head = body;
+  let sharedDay: Date | null = null; // cancels: the day the events sit on
+  let targetDay: Date | null = null; // moves: the shared destination day
+  let targetTime: TimeMatch | null = null;
+  let marker = false; // "all" / "be" connectives — the batch-move tell
+
+  if (kind === 'cancel') {
+    const dateMatch = extractDate(body, now);
+    sharedDay = dateMatch?.day ?? null;
+    head = stripMatch(body, dateMatch);
+  } else {
+    // An explicit " to " tail wins, exactly as parseMove splits it.
+    const splitAt = body.lastIndexOf(' to ');
+    if (splitAt !== -1) {
+      const tail = body.slice(splitAt + 4);
+      const tailDate = extractDate(tail, now);
+      let tailTime = extractTime(stripMatch(tail, tailDate));
+      if (!tailTime && !tailDate) {
+        const bare = /^\s*(\d{1,2})(?::(\d{2}))?\s*$/.exec(tail);
+        if (bare) {
+          const parsed = rawMinutes(bare[1], bare[2], undefined);
+          if (parsed) {
+            tailTime = {
+              startMin: parsed.min,
+              endMin: null,
+              startExplicit: false,
+              endExplicit: false,
+              text: bare[0],
+            };
+          }
+        }
+      }
+      if (tailDate || tailTime) {
+        head = body.slice(0, splitAt);
+        targetDay = tailDate?.day ?? null;
+        targetTime = tailTime;
+      }
+    }
+    if (!targetDay && !targetTime) {
+      const dateMatch = extractDate(head, now);
+      const afterDate = stripMatch(head, dateMatch);
+      const timeMatch = extractTime(afterDate);
+      if (!dateMatch && !timeMatch) return null; // no shared destination
+      targetDay = dateMatch?.day ?? null;
+      targetTime = timeMatch;
+      head = stripMatch(afterDate, timeMatch);
+    }
+    // Strip the connectives the time left behind: "… all be [at 5:30]".
+    let m: RegExpExecArray | null;
+    while ((m = TRAILING_MARKER_RE.exec(head)) !== null) {
+      if (m[1] === 'all' || m[1] === 'both' || m[1] === 'each' || m[1] === 'be') marker = true;
+      head = head.slice(0, m.index);
+    }
+    if (isMake && !targetTime) return null; // "make X friday" stays a create
+  }
+  head = head.trim();
+  if (!head) return null;
+
+  const plausible = (query: string, day: Date | null): boolean =>
+    findEventsByQuery(events, query, day, now).length > 0;
+
+  // Quantified form: one query, every match ("move all gym events to 6pm").
+  const quant = QUANTIFIER_RE.exec(head);
+  if (quant) {
+    const query = cleanQuery(head.slice(quant[0].length));
+    if (!query || !plausible(query, sharedDay)) return null;
+    const scopeHint = sharedDay ? ('occurrence' as const) : ('template' as const);
+    const op: SingleIntent =
+      kind === 'cancel'
+        ? { kind: 'cancel', query, queryDay: sharedDay, scopeHint, matchAll: true }
+        : { kind: 'move', query, queryDay: null, targetDay, targetTime, raw, scopeHint, matchAll: true };
+    return { kind: 'batch', ops: [op] };
+  }
+
+  const fragments = splitEnumeration(head);
+  if (fragments.length === 0) return null;
+  // A single fragment is only a batch when "make X (all) be at TIME" says so.
+  if (fragments.length === 1 && !(isMake && marker)) return null;
+
+  const ops: SingleIntent[] = [];
+  for (const fragment of fragments) {
+    const ownDate = extractDate(fragment, now);
+    const query = cleanQuery(stripMatch(fragment, ownDate));
+    const queryDay = ownDate?.day ?? sharedDay;
+    if (!query || !plausible(query, queryDay)) return null;
+    const scopeHint = queryDay ? ('occurrence' as const) : isMake ? ('template' as const) : ('occurrence' as const);
+    ops.push(
+      kind === 'cancel'
+        ? { kind: 'cancel', query, queryDay, scopeHint }
+        : { kind: 'move', query, queryDay: ownDate?.day ?? null, targetDay, targetTime, raw, scopeHint }
+    );
+  }
+  return { kind: 'batch', ops };
+}
 
 /* ---------------------------------------------------------- title/query ---- */
 
@@ -499,8 +723,15 @@ function parseCancel(body: string, now: Date): CancelIntent {
 /**
  * The whole pipeline: one string in, one intent out.
  * Never throws; unrecognized input falls through to a search.
+ *
+ * Pass `events` (the palette's loaded range) to enable batch fan-out —
+ * enumerations only split when each fragment matches something real.
  */
-export function parseCommand(rawInput: string, now: Date = new Date()): ParsedIntent | null {
+export function parseCommand(
+  rawInput: string,
+  now: Date = new Date(),
+  events: CalendarEvent[] = []
+): ParsedIntent | null {
   const raw = rawInput.trim();
   if (!raw) return null;
   const lower = raw.toLowerCase();
@@ -516,6 +747,9 @@ export function parseCommand(rawInput: string, now: Date = new Date()): ParsedIn
 
   const recur = RECUR_RE.exec(lower);
   if (recur) return parseRecur(recur[1].trim(), now);
+
+  const batch = parseBatch(lower, raw, now, events);
+  if (batch) return batch;
 
   if (MOVE_VERB.test(lower)) return parseMove(lower.replace(MOVE_VERB, '').trim(), raw, now);
   if (CANCEL_VERB.test(lower)) return parseCancel(lower.replace(CANCEL_VERB, '').trim(), now);

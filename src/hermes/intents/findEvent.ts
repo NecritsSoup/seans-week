@@ -9,24 +9,20 @@ import { categoryFor } from './parse';
 
 const FILLER = new Set(['the', 'and', 'with', 'for', 'that', 'this', 'one']);
 
-/**
- * Candidate events for a fuzzy query, best first. Returns every event tied
- * for the top score — more than one means the palette should ask which.
- */
-export function findEventsByQuery(
-  events: CalendarEvent[],
-  query: string,
-  queryDay: Date | null,
-  now: Date = new Date()
-): CalendarEvent[] {
+interface ScoredEvent {
+  event: CalendarEvent;
+  score: number;
+}
+
+/** Title-token + category scoring, shared by both finders. */
+function scoreEvents(events: CalendarEvent[], query: string): ScoredEvent[] {
   const keywords = query
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length > 2 && !FILLER.has(w));
   const categoryId = categoryFor(query);
   if (keywords.length === 0 && !categoryId) return [];
-
-  let scored = events
+  return events
     .map((event) => {
       const title = event.title.toLowerCase();
       let score = 0;
@@ -37,6 +33,19 @@ export function findEventsByQuery(
       return { event, score };
     })
     .filter((m) => m.score > 0);
+}
+
+/**
+ * Candidate events for a fuzzy query, best first. Returns every event tied
+ * for the top score — more than one means the palette should ask which.
+ */
+export function findEventsByQuery(
+  events: CalendarEvent[],
+  query: string,
+  queryDay: Date | null,
+  now: Date = new Date()
+): CalendarEvent[] {
+  let scored = scoreEvents(events, query);
   if (scored.length === 0) return [];
 
   if (queryDay) {
@@ -65,4 +74,43 @@ export function findEventsByQuery(
   const first = top[0].event;
   const sameDayTies = top.filter((m) => isSameDay(new Date(m.event.start), new Date(first.start)));
   return sameDayTies.map((m) => m.event);
+}
+
+/**
+ * EVERY event a quantified query reaches ("all gym events", "every gym"):
+ * upcoming matches only (or the queried day's), collapsed to one entry per
+ * recurring series — its soonest occurrence — so a batch shows one row per
+ * rhythm, not one per week. Soonest first.
+ */
+export function findAllEventsByQuery(
+  events: CalendarEvent[],
+  query: string,
+  queryDay: Date | null,
+  now: Date = new Date()
+): CalendarEvent[] {
+  let scored = scoreEvents(events, query);
+  if (scored.length === 0) return [];
+
+  if (queryDay) {
+    scored = scored.filter((m) => isSameDay(new Date(m.event.start), queryDay));
+  } else {
+    const nowMs = now.getTime();
+    scored = scored.filter((m) => new Date(m.event.end).getTime() >= nowMs);
+  }
+  scored.sort((a, b) => a.event.start.localeCompare(b.event.start));
+
+  const bySeries = new Map<string, CalendarEvent>();
+  const out: CalendarEvent[] = [];
+  for (const { event } of scored) {
+    const seriesKey = event.templateId ?? event.googleSeriesId;
+    if (seriesKey) {
+      if (!bySeries.has(seriesKey)) {
+        bySeries.set(seriesKey, event);
+        out.push(event);
+      }
+    } else {
+      out.push(event);
+    }
+  }
+  return out;
 }
