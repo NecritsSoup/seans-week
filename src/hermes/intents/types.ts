@@ -38,12 +38,20 @@ export interface MoveIntent {
   targetTime: TimeMatch | null;
   /** Original input, for am/pm word inference. */
   raw: string;
+  /** Batch-only: preferred recurrence scope for recurring targets. */
+  scopeHint?: 'occurrence' | 'template';
+  /** Batch-only: "all/every gym" — expand to every match, not just one. */
+  matchAll?: boolean;
 }
 
 export interface CancelIntent {
   kind: 'cancel';
   query: string;
   queryDay: Date | null;
+  /** Batch-only: preferred recurrence scope for recurring targets. */
+  scopeHint?: 'occurrence' | 'template';
+  /** Batch-only: "cancel all reading" — expand to every match. */
+  matchAll?: boolean;
 }
 
 /** "make friday's gym weekly": convert a found one-off into a template. */
@@ -72,6 +80,20 @@ export interface SearchIntent {
   query: string;
 }
 
+/** The operations a batch can carry — the existing single-target intents. */
+export type SingleIntent = CreateIntent | MoveIntent | CancelIntent;
+
+/**
+ * Several operations parsed from one utterance ("make pull day, legs day and
+ * push day all be at 5:30"). The palette resolves each op against the
+ * calendar and presents a reviewable batch; a batch of one op behaves
+ * exactly like the single intent would.
+ */
+export interface BatchIntent {
+  kind: 'batch';
+  ops: SingleIntent[];
+}
+
 export type ParsedIntent =
   | CreateIntent
   | MoveIntent
@@ -79,4 +101,5 @@ export type ParsedIntent =
   | RecurIntent
   | NavigateIntent
   | TodoIntent
-  | SearchIntent;
+  | SearchIntent
+  | BatchIntent;

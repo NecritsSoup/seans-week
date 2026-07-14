@@ -11,7 +11,7 @@ import {
   snapMinutes,
 } from '../lib/time';
 import { appendLedger, markLedgerUndone } from '../hermes/ledgerStore';
-import { usePendingAction, type PendingAction } from '../hermes/pending';
+import { usePendingActions, type PendingAction } from '../hermes/pending';
 import { useEventActions, useEvents } from '../state/EventsContext';
 import { weekdayName, type RecurrenceScope } from '../state/recurrence';
 import {
@@ -76,23 +76,30 @@ interface HermesGhost {
   title: string;
 }
 
-/** The ghost a pending Hermes create/move projects onto `day`, if any. */
-function hermesGhostForDay(pending: PendingAction | null, day: Date): HermesGhost | null {
-  if (!pending || pending.kind === 'cancel' || pending.kind === 'recur') return null;
-  if (!isSameDay(pending.day, day)) return null;
-  return {
-    startMin: pending.startMin,
-    endMin: pending.endMin,
-    categoryId: pending.kind === 'create' ? pending.categoryId : pending.event.categoryId,
-    title: pending.kind === 'create' ? pending.title : pending.event.title,
-  };
+/** The ghosts pending Hermes creates/moves project onto `day`. */
+function hermesGhostsForDay(pending: PendingAction[], day: Date): HermesGhost[] {
+  const ghosts: HermesGhost[] = [];
+  for (const action of pending) {
+    if (action.kind === 'cancel' || action.kind === 'recur') continue;
+    if (!isSameDay(action.day, day)) continue;
+    ghosts.push({
+      startMin: action.startMin,
+      endMin: action.endMin,
+      categoryId: action.kind === 'create' ? action.categoryId : action.event.categoryId,
+      title: action.kind === 'create' ? action.title : action.event.title,
+    });
+  }
+  return ghosts;
 }
 
-/** How a pending Hermes action marks an existing event, if at all. */
-function hermesMarkFor(pending: PendingAction | null, eventId: string): 'cancel' | 'source' | null {
-  if (!pending || pending.kind === 'create') return null;
-  if (pending.event.id !== eventId) return null;
-  return pending.kind === 'cancel' ? 'cancel' : 'source';
+/** How the pending Hermes actions mark an existing event, if at all. */
+function hermesMarkFor(pending: PendingAction[], eventId: string): 'cancel' | 'source' | null {
+  for (const action of pending) {
+    if (action.kind === 'create') continue;
+    if (action.event.id !== eventId) continue;
+    return action.kind === 'cancel' ? 'cancel' : 'source';
+  }
+  return null;
 }
 
 // Legibility floor for the fit-to-viewport day: never compress below this
@@ -112,7 +119,7 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
   const [todoDrop, setTodoDrop] = useState<{ dayIndex: number; startMin: number } | null>(null);
   const [scopeAsk, setScopeAsk] = useState<ScopeAsk | null>(null);
-  const hermesPending = usePendingAction();
+  const hermesPending = usePendingActions();
   const { showToast } = useToast();
 
   const rangeStart = days[0];
@@ -393,7 +400,7 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
           const isToday = isSameDay(day, today);
           const showDragGhost = drag !== null && drag.dayIndex === dayIndex;
           const showPendingGhost = pendingCreate !== null && pendingCreate.dayIndex === dayIndex;
-          const hermesGhost = hermesGhostForDay(hermesPending, day);
+          const hermesGhosts = hermesGhostsForDay(hermesPending, day);
           return (
             <div
               key={day.toDateString()}
@@ -410,16 +417,17 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
                   hermesMark={hermesMarkFor(hermesPending, positioned.event.id)}
                 />
               ))}
-              {hermesGhost && (
+              {hermesGhosts.map((ghost, ghostIndex) => (
                 <GhostBlock
-                  startMin={hermesGhost.startMin}
-                  endMin={hermesGhost.endMin}
+                  key={`hg-${ghostIndex}`}
+                  startMin={ghost.startMin}
+                  endMin={ghost.endMin}
                   pxPerMin={pxPerMin}
-                  categoryId={hermesGhost.categoryId}
-                  title={hermesGhost.title}
+                  categoryId={ghost.categoryId}
+                  title={ghost.title}
                   pulse
                 />
-              )}
+              ))}
               {showDragGhost && (
                 <GhostBlock
                   startMin={drag.startMin}

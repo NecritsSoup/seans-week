@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { signIn, signOut, useGoogleAuth } from '../google/auth';
 import { createGoogleWeekly } from '../google/googleSeriesOps';
 import { useSyncStatus } from '../google/syncEngine';
+import { clearApiKey, setApiKey, useHasApiKey } from '../hermes/brain/keyStore';
 import { appendLedger } from '../hermes/ledgerStore';
 import { dateAtMinutes, dateKey, fmtClock, relTime } from '../lib/time';
 import { useResetDemoData } from '../state/EventsContext';
@@ -38,6 +39,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [confirmingMigrate, setConfirmingMigrate] = useState(false);
   const [migrating, setMigrating] = useState(false);
+  const hasKey = useHasApiKey();
+  // Write-only draft: the stored key is never rendered back into the DOM.
+  const [keyDraft, setKeyDraft] = useState('');
   // Keeps "last synced …" honest while the panel sits open.
   const [, setSyncTick] = useState(0);
 
@@ -50,8 +54,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     if (!open) {
       setConfirmingReset(false);
       setConfirmingMigrate(false);
+      setKeyDraft('');
     }
   }, [open]);
+
+  function saveKey() {
+    const value = keyDraft.trim();
+    if (!value) return;
+    setApiKey(value);
+    setKeyDraft('');
+    showToast({ message: 'Hermes has a mind now.' });
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -205,6 +218,61 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             </button>
           ))}
         </div>
+      </section>
+
+      <hr className="gold-rule" />
+
+      <section className="settings-section">
+        <h3 className="scrolls-heading">Hermes’s mind</h3>
+        {hasKey ? (
+          <div className="settings-row">
+            <span className="settings-value">Anthropic API key stored</span>
+            <button
+              className="btn small"
+              onClick={() => {
+                clearApiKey();
+                showToast({ message: 'The key is forgotten.' });
+              }}
+            >
+              Clear key
+            </button>
+          </div>
+        ) : (
+          <div className="settings-row">
+            <input
+              className="settings-key-input"
+              type="password"
+              autoComplete="off"
+              placeholder="Anthropic API key (sk-ant-…)"
+              aria-label="Anthropic API key"
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveKey();
+              }}
+            />
+            <button
+              className="btn small primary"
+              onClick={saveKey}
+              disabled={keyDraft.trim() === ''}
+            >
+              Save
+            </button>
+          </div>
+        )}
+        <p className="settings-note">
+          Stored only in this browser; your commands and event titles are sent to Anthropic when
+          Hermes needs help interpreting. Get a key at{' '}
+          <a
+            className="settings-inline-link"
+            href="https://console.anthropic.com/settings/keys"
+            target="_blank"
+            rel="noreferrer"
+          >
+            console.anthropic.com
+          </a>
+          .
+        </p>
       </section>
 
       <hr className="gold-rule" />

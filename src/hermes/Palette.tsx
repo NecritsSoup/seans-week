@@ -11,7 +11,7 @@ import {
 import { isSignedIn } from '../google/auth';
 import { categoryById } from '../state/categories';
 import { useEventActions, useEvents } from '../state/EventsContext';
-import { weekdayName, type RecurrenceScope } from '../state/recurrence';
+import { getTemplates, weekdayName, type RecurrenceScope } from '../state/recurrence';
 import {
   createWeeklyRhythm,
   endSeries,
@@ -23,11 +23,42 @@ import { addTodo } from '../state/todos';
 import type { CalendarEvent } from '../state/types';
 import type { ViewMode } from '../stage/Stage';
 import { useToast } from '../ui';
-import { findEventsByQuery } from './intents/findEvent';
-import { parseCommand, resolveMoveTimes } from './intents/parse';
-import type { CancelIntent, MoveIntent, RecurIntent } from './intents/types';
-import { appendLedger, markLedgerUndone, type RestorableEvent } from './ledgerStore';
-import { clearPendingAction, setPendingAction, type PendingAction } from './pending';
+import {
+  fmtEventFrom,
+  fmtMoveTo,
+  listNames,
+  narrateBatch,
+  performBatchOp,
+  stageBatch,
+} from './batch';
+import { BrainError, brainEligible, interpret } from './brain/interpret';
+import { hasApiKey, useHasApiKey } from './brain/keyStore';
+import { findAllEventsByQuery, findEventsByQuery } from './intents/findEvent';
+import {
+  batchMeridian,
+  parseCommand,
+  resolveBatchMoveTimes,
+  resolveMoveTimes,
+} from './intents/parse';
+import type {
+  CancelIntent,
+  MoveIntent,
+  RecurIntent,
+  SingleIntent,
+  TimeMatch,
+} from './intents/types';
+import {
+  appendLedger,
+  markLedgerUndone,
+  type LedgerUndo,
+  type RestorableEvent,
+} from './ledgerStore';
+import {
+  clearPendingAction,
+  setPendingAction,
+  setPendingActions,
+  type PendingAction,
+} from './pending';
 
 /**
  * A staged action handed to the palette from another surface (a scroll's
@@ -47,6 +78,32 @@ interface PaletteProps {
   onNavigate: (day: Date | null, view: ViewMode | null) => void;
   /** Optional pre-staged confirmation (see PaletteSeed). */
   seed?: PaletteSeed | null;
+  /** Optional pre-staged batch of operations (see stageBatch in batch.ts). */
+  batchSeed?: SingleIntent[] | null;
+}
+
+/** One reviewable operation in a staged batch. */
+interface BatchRow {
+  key: string;
+  op: SingleIntent;
+  /** Resolved target for move/cancel rows; null while ambiguous/missing. */
+  event: CalendarEvent | null;
+  /** Tied-top matches when more than one — resolved inline per row. */
+  candidates: CalendarEvent[];
+  scope: RecurrenceScope;
+  /** The executable action, once the row is resolved. */
+  action: PendingAction | null;
+  /** The query matched nothing on the calendar. */
+  missing: boolean;
+}
+
+interface BatchState {
+  rows: BatchRow[];
+  /** A bare shared time ("all be at 5:30") — its meridian is toggleable. */
+  bareTime: TimeMatch | null;
+  meridian: 'am' | 'pm';
+  /** Key of the row whose inline chooser is open. */
+  choosing: string | null;
 }
 
 type PaletteMode =
@@ -57,7 +114,13 @@ type PaletteMode =
       candidates: CalendarEvent[];
     }
   | { kind: 'confirm'; action: PendingAction; summary: string }
-  | { kind: 'message'; text: string };
+  | { kind: 'batch'; batch: BatchState }
+  /** Hermes's mind is consulting the API — palette stays open, abortable. */
+  | { kind: 'ponder' }
+  | { kind: 'message'; text: string; showSearch?: boolean };
+
+/** Once per page session: the "add a key" hint after a failed parse. */
+let brainHintSeen = false;
 
 const SUGGESTIONS = [
   'add gym friday 8am',
@@ -73,6 +136,10 @@ const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'
 
 function countWord(n: number): string {
   return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
+}
+
+function capitalizeFirst(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 function fmtDay(day: Date): string {
@@ -91,6 +158,20 @@ function fmtEventWhen(event: CalendarEvent): string {
 /** 'Friday' for the day an event occurrence sits on. */
 function eventDayName(event: CalendarEvent): string {
   return weekdayName(new Date(event.start).getDay());
+}
+
+/** "5:30pm" — how batch hints and the meridian toggle show a time. */
+function fmtAmPm(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`;
+}
+
+/** The name a batch row goes by before/after resolution. */
+function batchRowName(row: { op: SingleIntent; event: CalendarEvent | null }): string {
+  if (row.event) return row.event.title;
+  return row.op.kind === 'create' ? row.op.title : row.op.query;
 }
 
 /** The restore shape for undoing a delete of `event`. */
@@ -137,12 +218,16 @@ function searchEvents(events: CalendarEvent[], query: string): CalendarEvent[] {
  * navigates and captures. Destructive intents preview as a ghost on the
  * grid and commit only on a second Enter.
  */
-export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps) {
+export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = null }: PaletteProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<PaletteMode>({ kind: 'input' });
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const seedCommitRef = useRef<(() => void) | null>(null);
+  const hasKey = useHasApiKey();
+  /** In-flight brain call — aborted on Escape, close, or a new question. */
+  const brainAbortRef = useRef<AbortController | null>(null);
+  const hintShownRef = useRef(false);
 
   const [rangeStart] = useState(() => addDays(startOfDay(new Date()), -14));
   const [rangeEnd] = useState(() => addDays(startOfDay(new Date()), 90));
@@ -150,7 +235,7 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
   const { createEvent, updateEvent, deleteEvent } = useEventActions();
   const { showToast } = useToast();
 
-  const intent = useMemo(() => parseCommand(text), [text]);
+  const intent = useMemo(() => parseCommand(text, new Date(), events), [text, events]);
   const searchResults = useMemo(
     () => (intent?.kind === 'search' ? searchEvents(events, intent.query) : []),
     [intent, events]
@@ -161,6 +246,10 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     if (open) {
       inputRef.current?.focus();
     } else {
+      brainAbortRef.current?.abort();
+      brainAbortRef.current = null;
+      if (hintShownRef.current) brainHintSeen = true;
+      hintShownRef.current = false;
       setText('');
       setMode({ kind: 'input' });
       setHighlight(0);
@@ -168,9 +257,12 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     }
   }, [open]);
 
+  // Keep focus on the input in every mode so ⏎ / esc always land on the
+  // dialog's key handler — clicking a row (which unmounts under the cursor)
+  // would otherwise drop focus to the body and strand the keyboard.
   useEffect(() => {
-    if (mode.kind === 'input') inputRef.current?.focus();
-  }, [mode.kind]);
+    inputRef.current?.focus();
+  }, [mode]);
 
   useEffect(() => setHighlight(0), [text]);
 
@@ -184,15 +276,30 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     setMode({ kind: 'confirm', action, summary });
   }, [open, seed, onNavigate]);
 
+  // An injected batch (stageBatch from batch.ts) opens straight into review.
+  const stagedBatchRef = useRef<SingleIntent[] | null>(null);
+  useEffect(() => {
+    if (!open || !batchSeed || batchSeed.length === 0) return;
+    if (stagedBatchRef.current === batchSeed) return;
+    stagedBatchRef.current = batchSeed;
+    stageBatchReview(batchSeed);
+    // stageBatchReview is re-created per render but only reads current state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, batchSeed]);
+
   if (!open) return null;
 
   function backToInput() {
+    brainAbortRef.current?.abort();
+    brainAbortRef.current = null;
     clearPendingAction();
     seedCommitRef.current = null;
     setMode({ kind: 'input' });
   }
 
   function close() {
+    brainAbortRef.current?.abort();
+    brainAbortRef.current = null;
     clearPendingAction();
     onClose();
   }
@@ -268,6 +375,317 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
       setHighlight(0);
       setMode({ kind: 'choose', intent, candidates });
     }
+  }
+
+  /* --------------------------------------------------------------- brain ---- */
+
+  /** The palette hint's road to the key field. */
+  function openSettingsFromPalette() {
+    close();
+    window.dispatchEvent(new CustomEvent('hermes:settings'));
+  }
+
+  /**
+   * The LLM fallback: interpret an unparseable command into SingleIntent ops
+   * and stage them into the SAME batch review every parsed command uses —
+   * the model proposes, the owner confirms. Only ever called explicitly
+   * (Enter or the Ask Hermes row); deterministic parses never reach it.
+   */
+  async function askHermes() {
+    const raw = text.trim();
+    if (!raw || !hasApiKey()) return;
+    brainAbortRef.current?.abort();
+    const controller = new AbortController();
+    brainAbortRef.current = controller;
+    setMode({ kind: 'ponder' });
+    try {
+      const ops = await interpret(
+        raw,
+        { now: new Date(), templates: getTemplates(), events },
+        controller.signal
+      );
+      if (controller.signal.aborted) return;
+      appendLedger(
+        'brain',
+        `Hermes interpreted: “${raw}” → ${ops.length} change${ops.length === 1 ? '' : 's'}.`
+      );
+      stageBatch(ops); // → hermes:batch → the palette's own batch review
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      setMode({
+        kind: 'message',
+        text:
+          err instanceof BrainError
+            ? err.message
+            : 'Something slipped from my hands mid-thought. Ask me again in a moment.',
+        showSearch: searchResults.length > 0,
+      });
+    } finally {
+      if (brainAbortRef.current === controller) brainAbortRef.current = null;
+    }
+  }
+
+  /* ------------------------------------------------------------- batches ---- */
+
+  function moveTimesForRow(
+    op: MoveIntent,
+    event: CalendarEvent,
+    bareTime: TimeMatch | null,
+    meridian: 'am' | 'pm'
+  ): { startMin: number; endMin: number } {
+    const origStartMin = minutesOfDay(new Date(event.start));
+    const origEndMin = minutesOfDay(new Date(event.end));
+    const shared =
+      bareTime !== null &&
+      op.targetTime !== null &&
+      !op.targetTime.startExplicit &&
+      op.targetTime.startMin === bareTime.startMin;
+    // A shared bare time resolves to the SAME side of the clock on every
+    // row; a row-specific or explicit time keeps the single-move inference.
+    return shared
+      ? resolveBatchMoveTimes(op.targetTime, origStartMin, origEndMin, meridian)
+      : resolveMoveTimes(op.targetTime, origStartMin, origEndMin, op.raw.toLowerCase());
+  }
+
+  function actionForBatchRow(
+    row: BatchRow,
+    bareTime: TimeMatch | null,
+    meridian: 'am' | 'pm'
+  ): PendingAction | null {
+    const { op, event } = row;
+    if (op.kind === 'create') {
+      return {
+        kind: 'create',
+        title: op.title,
+        categoryId: op.categoryId,
+        day: op.day,
+        startMin: op.startMin,
+        endMin: op.endMin,
+        repeatWeekly: op.repeatWeekly,
+      };
+    }
+    if (!event) return null;
+    if (op.kind === 'cancel') return { kind: 'cancel', event };
+    const { startMin, endMin } = moveTimesForRow(op, event, bareTime, meridian);
+    const day = op.targetDay ?? startOfDay(new Date(event.start));
+    return { kind: 'move', event, day, startMin, endMin };
+  }
+
+  function buildBatchState(ops: SingleIntent[]): BatchState {
+    let counter = 0;
+    const rows: BatchRow[] = [];
+    const push = (partial: Pick<BatchRow, 'op'> & Partial<BatchRow>) =>
+      rows.push({
+        key: `b${counter++}`,
+        event: null,
+        candidates: [],
+        scope: 'occurrence',
+        action: null,
+        missing: false,
+        ...partial,
+      });
+
+    for (const op of ops) {
+      if (op.kind === 'create') {
+        push({ op });
+        continue;
+      }
+      const scope: RecurrenceScope = op.scopeHint === 'template' ? 'template' : 'occurrence';
+      if (op.matchAll) {
+        const targets = findAllEventsByQuery(events, op.query, op.queryDay);
+        if (targets.length === 0) push({ op, scope, missing: true });
+        else for (const target of targets) push({ op, scope, event: target });
+      } else {
+        const candidates = findEventsByQuery(events, op.query, op.queryDay);
+        if (candidates.length === 0) push({ op, scope, missing: true });
+        else if (candidates.length === 1) push({ op, scope, event: candidates[0] });
+        else push({ op, scope, candidates });
+      }
+    }
+
+    // Two ops landing on the same event collapse to the first.
+    const seen = new Set<string>();
+    const deduped = rows.filter((row) => {
+      if (!row.event) return true;
+      if (seen.has(row.event.id)) return false;
+      seen.add(row.event.id);
+      return true;
+    });
+
+    // A bare time shared by every move op gets one meridian for all rows,
+    // shown in the header and flippable there (only 1–11 o'clock is ambiguous).
+    const bareMoves = deduped
+      .map((row) => row.op)
+      .filter(
+        (op): op is MoveIntent =>
+          op.kind === 'move' && op.targetTime !== null && !op.targetTime.startExplicit
+      );
+    let bareTime: TimeMatch | null = null;
+    if (
+      bareMoves.length > 0 &&
+      bareMoves.every((op) => op.targetTime!.startMin === bareMoves[0].targetTime!.startMin)
+    ) {
+      const t = bareMoves[0].targetTime!;
+      const h = Math.floor(t.startMin / 60);
+      if (h >= 1 && h <= 11) bareTime = t;
+    }
+    const origStarts = deduped
+      .filter((row) => row.op.kind === 'move' && row.event)
+      .map((row) => minutesOfDay(new Date(row.event!.start)));
+    const meridian: 'am' | 'pm' = bareTime
+      ? batchMeridian(bareTime, bareMoves[0].raw.toLowerCase(), origStarts)
+      : 'am';
+
+    for (const row of deduped) {
+      row.action = actionForBatchRow(row, bareTime, meridian);
+    }
+    return { rows: deduped, bareTime, meridian, choosing: null };
+  }
+
+  /** Put a batch on stage: ghosts for every row, review list in the palette. */
+  function applyBatch(batch: BatchState, navigate = false) {
+    setPendingActions(batch.rows.map((row) => row.action).filter((a): a is PendingAction => a !== null));
+    if (navigate) {
+      const first = batch.rows.find((row) => row.action);
+      if (first?.action) onNavigate(actionDay(first.action), null);
+    }
+    setMode({ kind: 'batch', batch });
+  }
+
+  /** Entry point for parsed AND injected batches (see stageBatch in batch.ts). */
+  function stageBatchReview(ops: SingleIntent[]) {
+    const batch = buildBatchState(ops);
+    if (batch.rows.length === 0 || batch.rows.every((row) => row.missing)) {
+      setMode({
+        kind: 'message',
+        text: 'I searched the calendar and found nothing like that. Try naming them another way?',
+      });
+      return;
+    }
+    applyBatch(batch, true);
+  }
+
+  function updateBatch(batch: BatchState, mutate: (rows: BatchRow[]) => BatchRow[]) {
+    const rows = mutate(batch.rows);
+    if (rows.length === 0) {
+      backToInput();
+      return;
+    }
+    applyBatch({ ...batch, rows });
+  }
+
+  function flipBatchMeridian(batch: BatchState) {
+    const meridian: 'am' | 'pm' = batch.meridian === 'pm' ? 'am' : 'pm';
+    const rows = batch.rows.map((row) =>
+      row.op.kind === 'move'
+        ? { ...row, action: actionForBatchRow(row, batch.bareTime, meridian) }
+        : row
+    );
+    applyBatch({ ...batch, meridian, rows });
+  }
+
+  function flipBatchScope(batch: BatchState, key: string) {
+    updateBatch(batch, (rows) =>
+      rows.map((row) =>
+        row.key === key
+          ? { ...row, scope: row.scope === 'template' ? 'occurrence' : 'template' }
+          : row
+      )
+    );
+  }
+
+  function dropBatchRow(batch: BatchState, key: string) {
+    updateBatch(batch, (rows) => rows.filter((row) => row.key !== key));
+  }
+
+  function chooseBatchTarget(batch: BatchState, key: string, event: CalendarEvent) {
+    const rows = batch.rows.map((row) =>
+      row.key === key
+        ? {
+            ...row,
+            event,
+            candidates: [],
+            action: actionForBatchRow(
+              { ...row, event },
+              batch.bareTime,
+              batch.meridian
+            ),
+          }
+        : row
+    );
+    applyBatch({ ...batch, rows, choosing: null });
+  }
+
+  async function executeBatch(batch: BatchState) {
+    const rows = batch.rows.filter((row) => row.action !== null);
+    if (rows.length === 0) return;
+    const undos: LedgerUndo[] = [];
+    const reverts: Array<() => void | Promise<void>> = [];
+    const done: BatchRow[] = [];
+    const failed: BatchRow[] = [];
+    for (const row of rows) {
+      try {
+        const result = await performBatchOp(row.action!, row.scope, {
+          createEvent,
+          updateEvent,
+          deleteEvent,
+        });
+        if (!result) {
+          failed.push(row);
+          continue;
+        }
+        undos.push(result.undo);
+        reverts.push(result.revert);
+        done.push(row);
+      } catch {
+        failed.push(row);
+      }
+    }
+
+    if (done.length === 0) {
+      appendLedger('error', 'A batch of changes could not be saved — the calendar is unchanged.');
+      setMode({
+        kind: 'message',
+        text: 'None of those changes would take — the calendar is as it was.',
+      });
+      clearPendingAction();
+      return;
+    }
+
+    const entry = appendLedger(
+      'batch',
+      narrateBatch(done.map((row) => ({ action: row.action!, scope: row.scope }))),
+      { kind: 'batch', children: undos }
+    );
+    if (failed.length > 0) {
+      appendLedger(
+        'error',
+        `${listNames(failed.map(batchRowName))} could not be changed — the rest of the batch went through.`
+      );
+    }
+
+    const kinds = new Set(done.map((row) => row.action!.kind));
+    const verb =
+      kinds.size > 1 ? 'done' : kinds.has('move') ? 'moved' : kinds.has('cancel') ? 'cancelled' : 'added';
+    const undoAll = () => {
+      void (async () => {
+        for (let i = reverts.length - 1; i >= 0; i--) {
+          await Promise.resolve(reverts[i]()).catch(() => {});
+        }
+      })();
+      markLedgerUndone(entry.id);
+    };
+    showToast({
+      message:
+        failed.length > 0
+          ? `${done.length} of ${rows.length} ${verb} — ${listNames(failed.map(batchRowName))} was declined.`
+          : done.length === 1
+            ? `One change made.`
+            : `${capitalizeFirst(countWord(done.length))} changes made.`,
+      actionLabel: 'Undo',
+      onAction: undoAll,
+    });
+    close();
   }
 
   async function execute(action: PendingAction, scope: RecurrenceScope = 'occurrence') {
@@ -489,6 +907,13 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         break;
       }
       case 'search': {
+        // The rules found nothing actionable. If the input reads like a
+        // command (not a plain-noun search) and a key exists, consult the
+        // brain — unless the owner arrow-picked a search result below.
+        if (hasKey && highlight === 0 && brainEligible('search', text)) {
+          void askHermes();
+          break;
+        }
         const target = searchResults[highlight] ?? searchResults[0];
         if (target) {
           onNavigate(startOfDay(new Date(target.start)), null);
@@ -497,6 +922,12 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         break;
       }
       case 'create': {
+        // The verbless fallback can mint a garbage create out of a sweeping
+        // command — those belong to the brain when a key exists.
+        if (hasKey && brainEligible('create', text)) {
+          void askHermes();
+          break;
+        }
         const action: PendingAction = {
           kind: 'create',
           title: intent.title,
@@ -514,6 +945,9 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         );
         break;
       }
+      case 'batch':
+        stageBatchReview(intent.ops);
+        break;
       case 'move':
       case 'cancel':
       case 'recur':
@@ -543,16 +977,52 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
     }
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    if (mode.kind === 'ponder') return; // patience — esc aborts
     if (mode.kind === 'confirm') void execute(mode.action);
-    else if (mode.kind === 'choose') resolveTarget(mode.intent, mode.candidates[highlight]);
+    else if (mode.kind === 'batch') {
+      if (mode.batch.rows.every((row) => row.action !== null)) void executeBatch(mode.batch);
+    } else if (mode.kind === 'choose') resolveTarget(mode.intent, mode.candidates[highlight]);
     else if (mode.kind === 'message') backToInput();
     else submit();
   }
 
   const hint = (() => {
     if (!intent || mode.kind !== 'input') return null;
+    if (intent.kind === 'batch') {
+      const ops = intent.ops;
+      const first = ops[0];
+      const destOf = (op: SingleIntent): string => {
+        if (op.kind !== 'move') return '';
+        const day = op.targetDay ? weekdayName(op.targetDay.getDay()) : '';
+        let time = '';
+        if (op.targetTime) {
+          const t = op.targetTime;
+          const h = Math.floor(t.startMin / 60);
+          const pm =
+            !t.startExplicit &&
+            h >= 1 &&
+            h <= 11 &&
+            batchMeridian(t, op.raw.toLowerCase(), []) === 'pm';
+          time = fmtAmPm(pm ? t.startMin + 12 * 60 : t.startMin);
+        }
+        const where = [day, time].filter(Boolean).join(' ');
+        return where ? ` to ${where}` : '';
+      };
+      if (first.kind !== 'create' && first.matchAll) {
+        return first.kind === 'move'
+          ? `Move every ${first.query}${destOf(first)} — I will gather them for review.`
+          : `Cancel every ${first.query} — I will gather them for review.`;
+      }
+      const names = ops.map((op) => (op.kind === 'create' ? op.title : op.query));
+      const kinds = new Set(ops.map((op) => op.kind));
+      const verb =
+        kinds.size > 1 ? 'change' : first.kind === 'move' ? 'move' : first.kind === 'cancel' ? 'cancel' : 'add';
+      return `${capitalizeFirst(countWord(ops.length))} changes: ${verb} ${listNames(names)}${destOf(first)}.`;
+    }
     switch (intent.kind) {
       case 'create':
+        // A sweep command headed for the brain: the Ask Hermes row speaks instead.
+        if (hasKey && brainEligible('create', text)) return null;
         return intent.repeatWeekly
           ? `Create “${intent.title}” — every ${weekdayName(intent.day.getDay())}, ${fmtRange(intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`
           : `Create “${intent.title}” — ${fmtWhen(intent.day, intent.startMin, intent.endMin)} · ${categoryById(intent.categoryId).label}`;
@@ -570,6 +1040,20 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
         return null;
     }
   })();
+
+  // The brain's territory: the rules produced only a search, or a garbage
+  // fallback-create out of a sweeping command.
+  const parseFailed =
+    mode.kind === 'input' && intent?.kind === 'search' && text.trim().length >= 2;
+  const commandish =
+    mode.kind === 'input' &&
+    text.trim().length >= 2 &&
+    (intent?.kind === 'search' || intent?.kind === 'create') &&
+    brainEligible(intent.kind, text);
+  const showAskRow = parseFailed || commandish;
+  const showBrainHint = commandish && !hasKey && !brainHintSeen;
+  // Remember the hint was actually seen; the close effect makes it once-per-session.
+  if (showBrainHint) hintShownRef.current = true;
 
   /** Recurring cancel/move confirms ask scope: "this friday" / "every friday". */
   const confirmScopes =
@@ -650,6 +1134,45 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
                 )}
               </>
             )}
+            {showAskRow && (
+              <>
+                <button
+                  className="palette-row action"
+                  onClick={() => {
+                    if (hasKey) void askHermes();
+                    else openSettingsFromPalette();
+                  }}
+                >
+                  <span className="palette-row-title">
+                    Ask Hermes ✨{hasKey ? '' : ' — he needs an Anthropic key'}
+                  </span>
+                  {hasKey && commandish && <kbd>⏎</kbd>}
+                </button>
+                {showBrainHint && (
+                  <button className="palette-row brain-hint" onClick={openSettingsFromPalette}>
+                    <span className="palette-row-title">
+                      Hermes can interpret trickier requests with an Anthropic key — Settings
+                    </span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {mode.kind === 'ponder' && (
+          <div className="palette-body">
+            <div className="palette-voice palette-ponder">
+              Hermes ponders
+              <span className="ponder-dots" aria-hidden="true">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </span>
+            </div>
+            <div className="palette-note">
+              Interpreting with Anthropic — <kbd>esc</kbd> to let it go.
+            </div>
           </div>
         )}
 
@@ -708,9 +1231,148 @@ export function Palette({ open, onClose, onNavigate, seed = null }: PaletteProps
           </div>
         )}
 
+        {mode.kind === 'batch' &&
+          (() => {
+            const batch = mode.batch;
+            const resolved = batch.rows.filter((row) => row.action !== null);
+            const allResolved = resolved.length === batch.rows.length;
+            const otherMeridianMin =
+              batch.bareTime === null
+                ? 0
+                : batch.meridian === 'pm'
+                  ? batch.bareTime.startMin
+                  : batch.bareTime.startMin + 12 * 60;
+            const shownMeridianMin =
+              batch.bareTime === null
+                ? 0
+                : batch.meridian === 'pm'
+                  ? batch.bareTime.startMin + 12 * 60
+                  : batch.bareTime.startMin;
+            return (
+              <div className="palette-body">
+                <div className="palette-voice">
+                  {capitalizeFirst(countWord(batch.rows.length))}{' '}
+                  {batch.rows.length === 1 ? 'change' : 'changes'} staged — each one shows as a
+                  ghost on the grid. Drop or adjust any row, then confirm the lot.
+                </div>
+                {batch.bareTime && (
+                  <div className="batch-meridian">
+                    <span>
+                      That time reads as <strong>{fmtAmPm(shownMeridianMin)}</strong>
+                    </span>
+                    <button className="batch-pill" onClick={() => flipBatchMeridian(batch)}>
+                      use {fmtAmPm(otherMeridianMin)}
+                    </button>
+                  </div>
+                )}
+                {batch.rows.map((row) => {
+                  const icon =
+                    row.op.kind === 'create' ? '+' : row.op.kind === 'move' ? '→' : '⊘';
+                  const colorToken = row.event
+                    ? categoryById(row.event.categoryId).colorToken
+                    : row.op.kind === 'create'
+                      ? categoryById(row.op.categoryId).colorToken
+                      : '';
+                  const summary = (() => {
+                    if (row.missing) return 'nothing matches';
+                    if (!row.action) return 'which one?';
+                    if (row.action.kind === 'move' && row.event)
+                      return `${fmtEventFrom(row.event)} → ${fmtMoveTo(row.action.day, row.action.startMin)}`;
+                    if (row.action.kind === 'cancel' && row.event)
+                      return fmtEventFrom(row.event);
+                    if (row.action.kind === 'create')
+                      return fmtWhen(row.action.day, row.action.startMin, row.action.endMin);
+                    return '';
+                  })();
+                  return (
+                    <div key={row.key} className="batch-row-wrap">
+                      <div className={`batch-row ${colorToken}${row.missing ? ' missing' : ''}`}>
+                        <span className="batch-icon" aria-hidden="true">
+                          {icon}
+                        </span>
+                        <span className="cat-dot" />
+                        <span className="palette-row-title">{batchRowName(row)}</span>
+                        <span className="palette-row-when tnum">{summary}</span>
+                        {row.event?.recurring && (
+                          <button
+                            className={`batch-pill${row.scope === 'template' ? ' active' : ''}`}
+                            onClick={() => flipBatchScope(batch, row.key)}
+                            title="Toggle whether this reaches every week"
+                          >
+                            {row.scope === 'template' ? 'every week' : 'this day'}
+                          </button>
+                        )}
+                        <button
+                          className="batch-x"
+                          onClick={() => dropBatchRow(batch, row.key)}
+                          aria-label={`Drop ${batchRowName(row)} from the batch`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {row.missing && (
+                        <div className="batch-note">
+                          Nothing on the calendar answers to “
+                          {row.op.kind === 'create' ? row.op.title : row.op.query}” — drop this
+                          row to continue.
+                        </div>
+                      )}
+                      {row.candidates.length > 1 && (
+                        <div className="batch-choose">
+                          {row.candidates.map((ev) => (
+                            <button
+                              key={ev.id}
+                              className={`palette-row ${categoryById(ev.categoryId).colorToken}`}
+                              onClick={() => chooseBatchTarget(batch, row.key, ev)}
+                            >
+                              <span className="cat-dot" />
+                              <span className="palette-row-title">{ev.title}</span>
+                              <span className="palette-row-when tnum">{fmtEventWhen(ev)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="palette-confirm-actions">
+                  <button className="btn" onClick={backToInput}>
+                    Back <kbd>esc</kbd>
+                  </button>
+                  <button
+                    className="btn primary"
+                    disabled={!allResolved || resolved.length === 0}
+                    onClick={() => void executeBatch(batch)}
+                  >
+                    Confirm {resolved.length} {resolved.length === 1 ? 'change' : 'changes'}{' '}
+                    <kbd>⏎</kbd>
+                  </button>
+                </div>
+                <div className="palette-note">
+                  Ghosts of every change are on the grid behind me.
+                </div>
+              </div>
+            );
+          })()}
+
         {mode.kind === 'message' && (
           <div className="palette-body">
             <div className="palette-voice">{mode.text}</div>
+            {mode.showSearch &&
+              searchResults.map((ev) => (
+                <button
+                  key={ev.id}
+                  className={`palette-row ${categoryById(ev.categoryId).colorToken}`}
+                  onClick={() => {
+                    onNavigate(startOfDay(new Date(ev.start)), null);
+                    close();
+                  }}
+                >
+                  <span className="cat-dot" />
+                  <span className="palette-row-title">{ev.title}</span>
+                  <span className="palette-row-when tnum">{fmtEventWhen(ev)}</span>
+                </button>
+              ))}
             <div className="palette-confirm-actions">
               <button className="btn" onClick={backToInput}>
                 Back <kbd>esc</kbd>

@@ -13,6 +13,8 @@ export type LedgerType =
   | 'create'
   | 'move'
   | 'cancel'
+  /** Several operations confirmed as one reviewable batch. */
+  | 'batch'
   /** Title/category changes (recurring scope edits). */
   | 'edit'
   | 'todo'
@@ -23,7 +25,9 @@ export type LedgerType =
   /** Email scrolls turned into to-dos or events. */
   | 'scroll'
   /** Hermes's own suggestions, accepted from the Dispatches hub. */
-  | 'suggest';
+  | 'suggest'
+  /** The LLM fallback interpreted a command into a staged (not executed) batch. */
+  | 'brain';
 
 /** The fields needed to recreate a deleted one-off event. */
 export interface RestorableEvent {
@@ -77,7 +81,9 @@ export type LedgerUndo =
       title: string;
       restoreEvent?: RestorableEvent;
       restoreTemplate?: RecurringTemplate;
-    };
+    }
+  /** A confirmed batch: run every child undo, last change first. */
+  | { kind: 'batch'; children: LedgerUndo[] };
 
 export interface LedgerEntry {
   id: string;
