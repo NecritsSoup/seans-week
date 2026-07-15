@@ -71,10 +71,11 @@ function GoogleChip({ onClick }: { onClick: () => void }) {
     <button
       className={`status-chip${stateClass}`}
       onClick={onClick}
-      title="Google account (Settings)"
+      title={`${label} — Google account (Settings)`}
+      aria-label={`${label} — Google account (Settings)`}
     >
       <span className="status-dot" aria-hidden="true" />
-      {label}
+      <span className="chip-label">{label}</span>
     </button>
   );
 }
