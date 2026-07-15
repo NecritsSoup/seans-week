@@ -24,6 +24,9 @@ import type { CalendarEvent } from '../state/types';
 import type { ViewMode } from '../stage/Stage';
 import { useToast } from '../ui';
 import {
+  actionDisplayName,
+  dedupeBatchRows,
+  describeOpFailure,
   fmtEventFrom,
   fmtMoveTo,
   listNames,
@@ -95,6 +98,8 @@ interface BatchRow {
   action: PendingAction | null;
   /** The query matched nothing on the calendar. */
   missing: boolean;
+  /** Sibling instances of the same series this one row's change also covers. */
+  collapsed?: number;
 }
 
 interface BatchState {
@@ -503,14 +508,10 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
       }
     }
 
-    // Two ops landing on the same event collapse to the first.
-    const seen = new Set<string>();
-    const deduped = rows.filter((row) => {
-      if (!row.event) return true;
-      if (seen.has(row.event.id)) return false;
-      seen.add(row.event.id);
-      return true;
-    });
+    // Collapse redundant rows — several instances of one series under
+    // 'template' scope, the same event resolved twice — wherever the ops
+    // came from (deterministic parser, the brain, a hermes:batch event).
+    const deduped = dedupeBatchRows(rows);
 
     // A bare time shared by every move op gets one meridian for all rows,
     // shown in the header and flippable there (only 1–11 o'clock is ambiguous).
@@ -613,7 +614,9 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
           }
         : row
     );
-    applyBatch({ ...batch, rows, choosing: null });
+    // A late choice can land on a series or event another row already
+    // covers — collapse again so the guarantee holds after every resolution.
+    applyBatch({ ...batch, rows: dedupeBatchRows(rows), choosing: null });
   }
 
   async function executeBatch(batch: BatchState) {
@@ -622,25 +625,40 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     const undos: LedgerUndo[] = [];
     const reverts: Array<() => void | Promise<void>> = [];
     const done: BatchRow[] = [];
-    const failed: BatchRow[] = [];
+    const failed: Array<{ row: BatchRow; reason: string | null }> = [];
+    const skipped: BatchRow[] = [];
+    // The execution safety net: one Set per batch means a second template-
+    // scope op against an already-changed series parent is skipped, not
+    // sent to Google to be rejected.
+    const mutatedParents = new Set<string>();
     for (const row of rows) {
       try {
-        const result = await performBatchOp(row.action!, row.scope, {
-          createEvent,
-          updateEvent,
-          deleteEvent,
-        });
+        const result = await performBatchOp(
+          row.action!,
+          row.scope,
+          { createEvent, updateEvent, deleteEvent },
+          mutatedParents
+        );
+        if (result === 'duplicate') {
+          skipped.push(row);
+          continue;
+        }
         if (!result) {
-          failed.push(row);
+          failed.push({ row, reason: null });
           continue;
         }
         undos.push(result.undo);
         reverts.push(result.revert);
         done.push(row);
-      } catch {
-        failed.push(row);
+      } catch (err) {
+        failed.push({ row, reason: describeOpFailure(err) });
       }
     }
+
+    // Disambiguate against every action in the batch, so two events sharing
+    // a title read as "Gym (Tue 7:30)" rather than "Gym and Gym".
+    const allActions = rows.map((row) => row.action!);
+    const nameOf = (row: BatchRow) => actionDisplayName(row.action!, allActions);
 
     if (done.length === 0) {
       appendLedger('error', 'A batch of changes could not be saved — the calendar is unchanged.');
@@ -657,16 +675,22 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
       narrateBatch(done.map((row) => ({ action: row.action!, scope: row.scope }))),
       { kind: 'batch', children: undos }
     );
+    if (skipped.length > 0) {
+      appendLedger(
+        'batch',
+        `${listNames(skipped.map(nameOf))} needed no separate write — an earlier change in this batch already covers that series.`
+      );
+    }
+    // One shared reason when every failure agrees on why; silence otherwise.
+    const reasons = new Set(failed.map((f) => f.reason).filter((r): r is string => r !== null));
+    const why = failed.length > 0 && reasons.size === 1 ? ` (${[...reasons][0]})` : '';
     if (failed.length > 0) {
       appendLedger(
         'error',
-        `${listNames(failed.map(batchRowName))} could not be changed — the rest of the batch went through.`
+        `${listNames(failed.map((f) => nameOf(f.row)))} could not be changed${why} — the rest of the batch went through.`
       );
     }
 
-    const kinds = new Set(done.map((row) => row.action!.kind));
-    const verb =
-      kinds.size > 1 ? 'done' : kinds.has('move') ? 'moved' : kinds.has('cancel') ? 'cancelled' : 'added';
     const undoAll = () => {
       void (async () => {
         for (let i = reverts.length - 1; i >= 0; i--) {
@@ -678,7 +702,7 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
     showToast({
       message:
         failed.length > 0
-          ? `${done.length} of ${rows.length} ${verb} — ${listNames(failed.map(batchRowName))} was declined.`
+          ? `${listNames(failed.map((f) => nameOf(f.row)))} could not be changed${why} — the rest went through.`
           : done.length === 1
             ? `One change made.`
             : `${capitalizeFirst(countWord(done.length))} changes made.`,
@@ -1315,6 +1339,13 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
                           Nothing on the calendar answers to “
                           {row.op.kind === 'create' ? row.op.title : row.op.query}” — drop this
                           row to continue.
+                        </div>
+                      )}
+                      {(row.collapsed ?? 0) > 0 && (
+                        <div className="batch-note">
+                          …and {countWord(row.collapsed!)} more{' '}
+                          {row.collapsed === 1 ? 'instance' : 'instances'} of the same series —
+                          this one change covers {row.collapsed === 1 ? 'it' : 'them'}.
                         </div>
                       )}
                       {row.candidates.length > 1 && (
