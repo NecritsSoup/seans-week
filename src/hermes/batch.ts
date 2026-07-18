@@ -113,6 +113,7 @@ function restorable(event: CalendarEvent): RestorableEvent {
     end: event.end,
     categoryId: event.categoryId,
     allDay: event.allDay,
+    meetingUrl: event.meetingUrl,
   };
 }
 

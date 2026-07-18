@@ -1,5 +1,10 @@
 import { useState } from 'react';
 import { appendLedger, markLedgerUndone } from '../hermes/ledgerStore';
+import {
+  isValidMeetingUrl,
+  meetingDomain,
+  MEETING_JOIN_LABELS,
+} from '../lib/meetingLink';
 import { fmtRange, minutesOfDay } from '../lib/time';
 import { CATEGORIES, categoryById } from '../state/categories';
 import { useEventActions } from '../state/EventsContext';
@@ -11,8 +16,8 @@ import {
   skipOccurrence,
   type RecurringOpResult,
 } from '../state/recurringOps';
-import type { CalendarEvent, CategoryId } from '../state/types';
-import { useToast } from '../ui';
+import type { CalendarEvent, CategoryId, EventPatch } from '../state/types';
+import { CameraGlyph, CopyGlyph, useToast } from '../ui';
 import { popoverPosition, type AnchorRect } from './popoverPosition';
 import { ScopeChooser } from './ScopeChooser';
 
@@ -31,6 +36,20 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
   const [mode, setMode] = useState<PopoverMode>('view');
   const [title, setTitle] = useState(event.title);
   const [categoryId, setCategoryId] = useState<CategoryId>(event.categoryId);
+  const [linkText, setLinkText] = useState(event.meetingUrl ?? '');
+
+  // Recurring edits route through the scoped template/series ops, which do
+  // not carry meeting links yet — the input stays a one-off affordance.
+  const linkEditable = !event.recurring;
+  const trimmedLink = linkText.trim();
+  const linkInvalid = linkEditable && trimmedLink !== '' && !isValidMeetingUrl(trimmedLink);
+
+  /** The link the edit form would save: unchanged when invalid ("quiet error"). */
+  function linkPatch(): Pick<EventPatch, 'meetingUrl'> {
+    if (!linkEditable || linkInvalid) return {};
+    if (trimmedLink === (event.meetingUrl ?? '')) return {};
+    return { meetingUrl: trimmedLink };
+  }
 
   const category = categoryById(event.categoryId);
   const { left, top } = popoverPosition(anchor);
@@ -54,7 +73,7 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
       setMode('ask-edit');
       return;
     }
-    await updateEvent(event.id, { title: nextTitle, categoryId });
+    await updateEvent(event.id, { title: nextTitle, categoryId, ...linkPatch() });
     onClose();
   }
 
@@ -136,9 +155,20 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
           end: snapshot.end,
           categoryId: snapshot.categoryId,
           allDay: snapshot.allDay,
+          meetingUrl: snapshot.meetingUrl,
         });
       },
     });
+  }
+
+  async function copyMeetingLink() {
+    if (!event.meetingUrl) return;
+    try {
+      await navigator.clipboard.writeText(event.meetingUrl);
+      showToast({ message: 'Link copied.' });
+    } catch {
+      showToast({ message: 'The link could not be copied.' });
+    }
   }
 
   return (
@@ -186,6 +216,25 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
                 ))}
               </select>
             </div>
+            {linkEditable && (
+              <>
+                <div className="pop-row">
+                  <input
+                    type="url"
+                    placeholder="Meeting link (https://…)"
+                    value={linkText}
+                    onChange={(e) => setLinkText(e.target.value)}
+                    aria-label="Meeting link"
+                    aria-invalid={linkInvalid || undefined}
+                  />
+                </div>
+                {linkInvalid && (
+                  <p className="pop-field-note" role="status">
+                    Meeting links must begin with https:// — this one will not be saved.
+                  </p>
+                )}
+              </>
+            )}
             <div className="pop-actions">
               <button className="btn" onClick={() => setMode('view')}>
                 Cancel
@@ -236,6 +285,34 @@ export function EventPopover({ event, anchor, onClose }: EventPopoverProps) {
                   onClick={() => void applyRecurringDelete('template')}
                 >
                   Stop repeating
+                </button>
+              </div>
+            )}
+            {event.meetingUrl && (
+              <div className="pop-join">
+                <a
+                  className="pop-join-link"
+                  href={event.meetingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="pop-join-glyph" aria-hidden="true">
+                    <CameraGlyph size={13} />
+                  </span>
+                  <span className="pop-join-words">
+                    <span className="pop-join-label">
+                      {MEETING_JOIN_LABELS[event.meetingProvider ?? 'other']}
+                    </span>
+                    <span className="pop-join-domain">{meetingDomain(event.meetingUrl)}</span>
+                  </span>
+                </a>
+                <button
+                  className="pop-join-copy"
+                  onClick={() => void copyMeetingLink()}
+                  aria-label="Copy meeting link"
+                  title="Copy meeting link"
+                >
+                  <CopyGlyph />
                 </button>
               </div>
             )}

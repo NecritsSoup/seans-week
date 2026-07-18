@@ -188,6 +188,7 @@ function restorable(event: CalendarEvent): RestorableEvent {
     end: event.end,
     categoryId: event.categoryId,
     allDay: event.allDay,
+    meetingUrl: event.meetingUrl,
   };
 }
 
@@ -746,6 +747,7 @@ export function Palette({ open, onClose, onNavigate, seed = null, batchSeed = nu
             categoryId: action.categoryId,
             start: dateAtMinutes(action.day, action.startMin).toISOString(),
             end: dateAtMinutes(action.day, action.endMin).toISOString(),
+            meetingUrl: action.meetingUrl,
           });
           const entry = appendLedger(
             'create',

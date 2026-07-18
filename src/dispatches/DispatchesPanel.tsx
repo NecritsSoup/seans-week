@@ -24,6 +24,7 @@ import { useLedgerUndo } from '../hermes/useLedgerUndo';
 import { addDays, fmtClock, fmtRange, minutesOfDay, relTime, startOfDay } from '../lib/time';
 import {
   dismissScroll,
+  fetchScrollMeetingLink,
   getScrollsRefreshedAt,
   refreshScrolls,
   subscribeScrolls,
@@ -253,7 +254,10 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
     });
   }
 
-  function scheduleScroll(scroll: Scroll) {
+  async function scheduleScroll(scroll: Scroll) {
+    // The one time a scroll's body is read: to carry its meeting link onto
+    // the calendar. No link (or no answer from Gmail) changes nothing.
+    const link = await fetchScrollMeetingLink(scroll.id).catch(() => null);
     const { day, startMin, endMin } = suggestedSlot();
     const action: PendingAction = {
       kind: 'create',
@@ -262,13 +266,21 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
       day,
       startMin,
       endMin,
+      meetingUrl: link?.url,
     };
     const seed: PaletteSeed = {
       action,
-      summary: `Schedule “${scroll.subject}” — tomorrow, ${fmtRange(startMin, endMin)}`,
+      summary: `Schedule “${scroll.subject}” — tomorrow, ${fmtRange(startMin, endMin)}${
+        link ? ' · meeting link in hand' : ''
+      }`,
       onCommit: () => {
         dismissScroll(scroll.id);
-        appendLedger('scroll', `Scheduled a scroll onto the calendar: “${scroll.subject}”.`);
+        appendLedger(
+          'scroll',
+          `Scheduled a scroll onto the calendar: “${scroll.subject}”.${
+            link ? ' Its meeting link came along.' : ''
+          }`
+        );
       },
     };
     onClose();
@@ -400,7 +412,7 @@ export function DispatchesPanel({ open, onClose, onNavigate }: DispatchesPanelPr
         onDismiss={() => slideOut(scroll.id, () => dismissScroll(scroll.id))}
         onSwipeDismiss={() => dismissScroll(scroll.id)}
         onMakeTodo={() => makeTodo(scroll)}
-        onSchedule={() => scheduleScroll(scroll)}
+        onSchedule={() => void scheduleScroll(scroll)}
       />
     );
   }

@@ -290,7 +290,7 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
     });
   }
 
-  async function savePendingCreate(title: string, categoryId: CategoryId) {
+  async function savePendingCreate(title: string, categoryId: CategoryId, meetingUrl?: string) {
     if (!pendingCreate) return;
     const day = days[pendingCreate.dayIndex];
     await createEvent({
@@ -298,6 +298,7 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
       categoryId,
       start: dateAtMinutes(day, pendingCreate.startMin).toISOString(),
       end: dateAtMinutes(day, pendingCreate.endMin).toISOString(),
+      meetingUrl,
     });
     // A confirmed to-do drop also completes the to-do.
     if (pendingCreate.todoId) {
@@ -479,7 +480,9 @@ export function TimeGrid({ days, pxPerMin: pxPerMinProp = 0.9 }: TimeGridProps) 
           endMin={pendingCreate.endMin}
           initialTitle={pendingCreate.title}
           initialCategoryId={pendingCreate.categoryId}
-          onSave={(title, categoryId) => void savePendingCreate(title, categoryId)}
+          onSave={(title, categoryId, meetingUrl) =>
+            void savePendingCreate(title, categoryId, meetingUrl)
+          }
           onCancel={() => setPendingCreate(null)}
         />
       )}

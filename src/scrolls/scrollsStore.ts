@@ -1,13 +1,16 @@
 import { useSyncExternalStore } from 'react';
 import { gFetch, isSignedIn, subscribeGoogleAuth } from '../google/auth';
 import { appendLedger } from '../hermes/ledgerStore';
+import { findMeetingLinkInText, type MeetingLink } from '../lib/meetingLink';
 
 // Scrolls: the emails Hermes carries word of. Ports the legacy loadInbox
 // (meeting/report digest) and loadPennScan (Penn email scan) Gmail queries,
 // with dismissals persisted under the legacy 'upennScanAdded' key so scrolls
 // handled in the old app stay handled here. Only subjects and senders are
-// kept — bodies are never fetched, and nothing here writes email content
-// anywhere.
+// kept — bodies are never fetched for listing, and nothing here writes email
+// content anywhere. The one exception: when a scroll is *scheduled*, that
+// single thread's body is fetched once to carry its meeting link onto the
+// calendar (see fetchScrollMeetingLink).
 
 const DISMISSED_KEY = 'upennScanAdded';
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -163,6 +166,98 @@ async function fetchThreads(query: string, kind: ScrollKind, max: number): Promi
     })
   );
   return threads;
+}
+
+/* ------------------------------------------------- meeting-link fetch ---- */
+
+interface GmailBodyPart {
+  mimeType?: string;
+  body?: { data?: string };
+  parts?: GmailBodyPart[];
+}
+
+export interface GmailFullThread {
+  messages?: Array<{ payload?: GmailBodyPart }>;
+}
+
+/** Gmail's base64url body data → text (best effort; '' on bad data). */
+function decodeBodyData(data: string): string {
+  try {
+    const b64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+/** The handful of entities that hide inside invite URLs and prose. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/gi, ' ');
+}
+
+/**
+ * HTML body → scannable text: hrefs are lifted out first (stripping tags
+ * would otherwise swallow the very URLs invites put behind "Join" buttons),
+ * then tags go and entities resolve.
+ */
+function htmlToScannableText(html: string): string {
+  const hrefs = [...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
+  const stripped = html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ');
+  return decodeEntities([...hrefs, stripped].join('\n'));
+}
+
+/** Every text/plain and text/html body in a payload tree, in order. */
+function collectBodyTexts(part: GmailBodyPart | undefined, out: string[]): void {
+  if (!part) return;
+  const data = part.body?.data;
+  if (data && part.mimeType?.startsWith('text/')) {
+    const text = decodeBodyData(data);
+    if (text) out.push(part.mimeType === 'text/html' ? htmlToScannableText(text) : text);
+  }
+  for (const child of part.parts ?? []) collectBodyTexts(child, out);
+}
+
+/** The first recognized meeting link anywhere in a full thread's bodies. */
+export function meetingLinkFromThread(thread: GmailFullThread): MeetingLink | null {
+  const texts: string[] = [];
+  for (const message of thread.messages ?? []) collectBodyTexts(message.payload, texts);
+  for (const text of texts) {
+    const link = findMeetingLinkInText(text);
+    if (link) return link;
+  }
+  return null;
+}
+
+/**
+ * Fetch one scroll's full thread (the only time a body is read — on the
+ * Schedule action, never for listing) and pull the first recognized meeting
+ * link from its text. Null when there is none; null with a quiet Ledger
+ * note when Gmail would not answer — the schedule flow proceeds either way.
+ */
+export async function fetchScrollMeetingLink(threadId: string): Promise<MeetingLink | null> {
+  if (!isSignedIn()) return null;
+  let thread: GmailFullThread;
+  try {
+    thread = (await gFetch(`${GMAIL_API}/threads/${threadId}?format=full`)) as GmailFullThread;
+  } catch {
+    appendLedger(
+      'error',
+      'The scroll’s letter could not be opened for its meeting link — scheduling it without one.'
+    );
+    return null;
+  }
+  return meetingLinkFromThread(thread);
 }
 
 let inFlight: Promise<void> | null = null;
