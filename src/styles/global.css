@@ -1466,6 +1466,145 @@ h1, h2, h3 {
   color: var(--accent);
 }
 
+/* ---------------------------------------------------------- meeting links ---- */
+
+/* Camera mark on linked blocks: absolutely placed, no layout shift. */
+.event-block .ev-link {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  line-height: 1;
+  color: var(--cat);
+  opacity: 0.9;
+  pointer-events: none;
+  display: inline-flex;
+}
+
+/* Both marks present: the camera steps left of the ↻. */
+.event-block.recurring .ev-link {
+  right: 17px;
+}
+
+.event-block.linked .ev-title {
+  padding-right: 14px;
+}
+
+.event-block.recurring.linked .ev-title {
+  padding-right: 26px;
+}
+
+/* Imminent join: the compact pill that replaces the camera mark. */
+.event-block .ev-join {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: var(--radius-round);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-contrast);
+  animation: join-pulse 2s var(--ease-out) infinite;
+}
+
+.event-block.recurring .ev-join {
+  right: 15px;
+}
+
+.event-block .ev-join:hover {
+  opacity: 0.92;
+}
+
+@keyframes join-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 3px var(--accent-soft); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .event-block .ev-join {
+    animation: none;
+  }
+}
+
+/* Event popover: the Join row — provider glyph, label, bare domain, copy. */
+.pop-join {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.pop-join-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 9px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.pop-join-link:hover {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+}
+
+.pop-join-glyph {
+  display: inline-flex;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.pop-join-words {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pop-join-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pop-join-domain {
+  font-size: 10.5px;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pop-join-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.pop-join-copy:hover {
+  border-color: var(--gold);
+  color: var(--text);
+}
+
+/* Quiet inline error under the meeting-link input. */
+.pop-field-note {
+  font-size: 11px;
+  color: var(--accent);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+}
+
 /* Scope chooser: "Just this Friday" / "Every week" */
 .scope-chooser {
   display: flex;

@@ -37,6 +37,8 @@ export interface RestorableEvent {
   end: string;
   categoryId: CategoryId;
   allDay?: boolean;
+  /** A conference URL, so undo restores the Join affordance too. */
+  meetingUrl?: string;
 }
 
 /** A PATCH body that puts a Google recurring parent back the way it was. */

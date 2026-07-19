@@ -1,3 +1,4 @@
+import { detectProvider } from '../lib/meetingLink';
 import { expandTemplates, isOccurrenceId, subscribeTemplates } from './recurrence';
 import type { CalendarEvent, EventInput, EventPatch, EventStore } from './types';
 
@@ -16,6 +17,15 @@ function load(): CalendarEvent[] {
 
 function newId(): string {
   return `ev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** The meeting fields an input/patch implies (provider is derived). */
+function meetingFields(
+  url: string | undefined
+): Pick<CalendarEvent, 'meetingUrl' | 'meetingProvider'> {
+  return url
+    ? { meetingUrl: url, meetingProvider: detectProvider(url) }
+    : { meetingUrl: undefined, meetingProvider: undefined };
 }
 
 /** localStorage-backed store for source 'local'. */
@@ -45,6 +55,7 @@ export class LocalEventStore implements EventStore {
       categoryId: input.categoryId,
       allDay: input.allDay,
       source: this.source,
+      ...(input.meetingUrl ? meetingFields(input.meetingUrl) : {}),
     };
     this.events = [...this.events, event];
     this.persist();
@@ -58,7 +69,12 @@ export class LocalEventStore implements EventStore {
     }
     const index = this.events.findIndex((ev) => ev.id === id);
     if (index === -1) throw new Error(`Event not found: ${id}`);
-    const updated = { ...this.events[index], ...patch };
+    const { meetingUrl, ...rest } = patch;
+    const updated: CalendarEvent = {
+      ...this.events[index],
+      ...rest,
+      ...(meetingUrl !== undefined ? meetingFields(meetingUrl) : {}),
+    };
     this.events = this.events.map((ev) => (ev.id === id ? updated : ev));
     this.persist();
     return updated;

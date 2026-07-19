@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isValidMeetingUrl } from '../lib/meetingLink';
 import { fmtRange } from '../lib/time';
 import { CATEGORIES } from '../state/categories';
 import type { CategoryId } from '../state/types';
@@ -12,7 +13,9 @@ interface CreatePopoverProps {
   /** Prefill (e.g. a to-do dropped onto the grid). */
   initialTitle?: string;
   initialCategoryId?: CategoryId;
-  onSave: (title: string, categoryId: CategoryId) => void;
+  /** Prefill from a source that carried a conference URL (a scroll). */
+  initialMeetingUrl?: string;
+  onSave: (title: string, categoryId: CategoryId, meetingUrl?: string) => void;
   onCancel: () => void;
 }
 
@@ -24,17 +27,24 @@ export function CreatePopover({
   endMin,
   initialTitle,
   initialCategoryId,
+  initialMeetingUrl,
   onSave,
   onCancel,
 }: CreatePopoverProps) {
   const [title, setTitle] = useState(initialTitle ?? '');
   const [categoryId, setCategoryId] = useState<CategoryId>(initialCategoryId ?? 'work');
+  const [linkText, setLinkText] = useState(initialMeetingUrl ?? '');
   const { left, top } = popoverPosition(anchor);
+
+  const trimmedLink = linkText.trim();
+  const linkInvalid = trimmedLink !== '' && !isValidMeetingUrl(trimmedLink);
 
   const dayLabel = day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
   function save() {
-    onSave(title.trim() || 'New event', categoryId);
+    // An invalid link never blocks the event — it just stays behind.
+    const meetingUrl = !linkInvalid && trimmedLink !== '' ? trimmedLink : undefined;
+    onSave(title.trim() || 'New event', categoryId, meetingUrl);
   }
 
   return (
@@ -81,6 +91,21 @@ export function CreatePopover({
             ))}
           </select>
         </div>
+        <div className="pop-row">
+          <input
+            type="url"
+            placeholder="Meeting link (optional)"
+            value={linkText}
+            onChange={(e) => setLinkText(e.target.value)}
+            aria-label="Meeting link"
+            aria-invalid={linkInvalid || undefined}
+          />
+        </div>
+        {linkInvalid && (
+          <p className="pop-field-note" role="status">
+            Meeting links must begin with https:// — this one will not be saved.
+          </p>
+        )}
         <div className="pop-actions">
           <button className="btn" onClick={onCancel}>
             Cancel

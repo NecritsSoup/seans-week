@@ -1,5 +1,6 @@
 import { categoryFor } from '../hermes/intents/parse';
 import { appendLedger } from '../hermes/ledgerStore';
+import { detectProvider, extractMeetingLink } from '../lib/meetingLink';
 import type { CalendarEvent, EventInput, EventPatch, EventStore } from '../state/types';
 import { requestToast } from '../ui/toastBus';
 import { GApiError, getGoogleAuth, gFetch, isSignedIn, subscribeGoogleAuth } from './auth';
@@ -54,12 +55,13 @@ export function localTimeZone(): string {
 }
 
 /** Map an API event to a CalendarEvent; null for the shapes the grid skips. */
-function toCalendarEvent(item: GoogleEvent): CalendarEvent | null {
+export function toCalendarEvent(item: GoogleEvent): CalendarEvent | null {
   if (!item.id || item.status === 'cancelled') return null;
   // Legacy skipped working-location blocks and date-only (all-day) events.
   if (item.eventType && /working[_-]?location/i.test(item.eventType)) return null;
   if (!item.start?.dateTime || !item.end?.dateTime) return null;
   const title = item.summary || '(no title)';
+  const meeting = extractMeetingLink(item);
   return {
     id: `${GOOGLE_ID_PREFIX}${item.id}`,
     title,
@@ -72,15 +74,34 @@ function toCalendarEvent(item: GoogleEvent): CalendarEvent | null {
     ...(item.recurringEventId
       ? { recurring: true, googleSeriesId: `${GOOGLE_ID_PREFIX}${item.recurringEventId}` }
       : {}),
+    ...(meeting ? { meetingUrl: meeting.url, meetingProvider: meeting.provider } : {}),
   };
 }
 
-function eventBody(input: { title: string; start: string; end: string }): Record<string, unknown> {
+/** The meeting fields a local input/patch implies (provider is derived). */
+function meetingFields(
+  url: string | undefined
+): Pick<CalendarEvent, 'meetingUrl' | 'meetingProvider'> {
+  return url
+    ? { meetingUrl: url, meetingProvider: detectProvider(url) }
+    : { meetingUrl: undefined, meetingProvider: undefined };
+}
+
+function eventBody(input: {
+  title: string;
+  start: string;
+  end: string;
+  meetingUrl?: string;
+}): Record<string, unknown> {
   const timeZone = localTimeZone();
   return {
     summary: input.title,
     start: { dateTime: input.start, timeZone },
     end: { dateTime: input.end, timeZone },
+    // The API cannot mint third-party conferenceData, so a locally attached
+    // link rides in `location` — the classic carrier — and round-trips
+    // through the extractor on every sync.
+    ...(input.meetingUrl ? { location: input.meetingUrl } : {}),
   };
 }
 
@@ -274,6 +295,7 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
       end: input.end,
       categoryId: input.categoryId,
       source: 'google',
+      ...meetingFields(input.meetingUrl),
     };
     this.synced.set(tempId, optimistic);
     this.notify();
@@ -325,6 +347,7 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
       end: input.end,
       categoryId: input.categoryId,
       source: 'google',
+      ...meetingFields(input.meetingUrl),
     };
     this.tombstones.delete(id);
     this.synced.set(id, optimistic);
@@ -356,10 +379,17 @@ export class GoogleCalendarStore implements EventStore, SyncConsumer {
     if (patch.title !== undefined) body.summary = patch.title;
     if (patch.start) body.start = { dateTime: patch.start, timeZone };
     if (patch.end) body.end = { dateTime: patch.end, timeZone };
+    // The link rides in `location` (see eventBody); '' clears it there too.
+    if (patch.meetingUrl !== undefined) body.location = patch.meetingUrl;
 
     const prev = this.synced.get(id) ?? null;
     if (prev) {
-      this.synced.set(id, { ...prev, ...patch });
+      const { meetingUrl, ...rest } = patch;
+      this.synced.set(id, {
+        ...prev,
+        ...rest,
+        ...(meetingUrl !== undefined ? meetingFields(meetingUrl) : {}),
+      });
       this.rangeCache.clear();
       this.notify();
     }

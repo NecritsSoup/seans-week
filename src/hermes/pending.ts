@@ -17,6 +17,8 @@ export type PendingAction =
       endMin: number;
       /** Create a weekly RecurringTemplate instead of a one-off. */
       repeatWeekly?: boolean;
+      /** Conference URL carried in from the source (a scheduled scroll). */
+      meetingUrl?: string;
     }
   | { kind: 'move'; event: CalendarEvent; day: Date; startMin: number; endMin: number }
   | { kind: 'cancel'; event: CalendarEvent }

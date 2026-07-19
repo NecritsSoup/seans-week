@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { appendLedger } from '../hermes/ledgerStore';
+import type { ConferenceData } from '../lib/meetingLink';
 import { GApiError, gFetch, isSignedIn, subscribeGoogleAuth } from './auth';
 
 // Incremental sync against the primary Google Calendar, per the documented
@@ -46,6 +47,12 @@ export interface GoogleEvent {
   recurrence?: string[];
   /** The parent recurring event's id — present on expanded instances. */
   recurringEventId?: string;
+  // Where a conference URL can live. events.list is called with no `fields`
+  // filter, so the default full event resource carries all four of these.
+  hangoutLink?: string;
+  conferenceData?: ConferenceData;
+  location?: string;
+  description?: string;
 }
 
 export interface GoogleEventList {

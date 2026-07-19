@@ -1,3 +1,5 @@
+import type { MeetingProvider } from '../lib/meetingLink';
+
 export type EventSource = 'local' | 'google';
 
 export type CategoryId = 'work' | 'gym' | 'reading' | 'dinner' | 'walk' | 'upenn';
@@ -25,6 +27,10 @@ export interface CalendarEvent {
   templateId?: string;
   /** The parent Google recurring event ('g:'-prefixed), for instances of a series. */
   googleSeriesId?: string;
+  /** Conference URL — extracted from Google fields or attached by hand. */
+  meetingUrl?: string;
+  /** Who hosts the meetingUrl; derived, never stored without a URL. */
+  meetingProvider?: MeetingProvider;
 }
 
 export interface EventInput {
@@ -35,6 +41,8 @@ export interface EventInput {
   end: string;
   categoryId: CategoryId;
   allDay?: boolean;
+  /** Optional conference URL (https); the provider is derived from it. */
+  meetingUrl?: string;
 }
 
 export interface EventPatch {
@@ -43,6 +51,8 @@ export interface EventPatch {
   end?: string;
   categoryId?: CategoryId;
   allDay?: boolean;
+  /** New conference URL; the empty string removes the link. */
+  meetingUrl?: string;
 }
 
 /**
